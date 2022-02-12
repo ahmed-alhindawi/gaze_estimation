@@ -1,4 +1,4 @@
-from __future__ import print_function, division, absolute_import
+#! /usr/bin/env python
 
 import argparse
 import os

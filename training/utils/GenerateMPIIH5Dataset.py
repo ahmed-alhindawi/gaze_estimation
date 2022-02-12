@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+
 import argparse
 import os
 from glob import glob
@@ -11,7 +13,7 @@ from PIL import ImageFilter, ImageOps
 from torchvision import transforms
 from tqdm import tqdm
 
-_required_size = (224, 224)
+_required_size = (36, 60)
 _transforms_list = [transforms.RandomResizedCrop(size=_required_size, scale=(0.85, 1.0)),  # equivalent to random 5px from each edge
                     transforms.RandomResizedCrop(size=_required_size, scale=(0.85, 1.0)),
                     transforms.RandomResizedCrop(size=_required_size, scale=(0.85, 1.0)),

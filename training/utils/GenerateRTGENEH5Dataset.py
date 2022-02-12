@@ -13,7 +13,7 @@ script_path = os.path.dirname(os.path.realpath(__file__))
 
 # Augmentations following `prepare_dataset.m`: randomly crop and resize the image 10 times,
 # along side two blurring stages, grayscaling and histogram normalisation
-_required_size = (224, 224)
+_required_size = (36, 60)
 _transforms_list = [transforms.RandomResizedCrop(size=_required_size, scale=(0.85, 1.0)),  # equivalent to random 5px from each edge
                     transforms.RandomResizedCrop(size=_required_size, scale=(0.85, 1.0)),
                     transforms.RandomResizedCrop(size=_required_size, scale=(0.85, 1.0)),
@@ -63,8 +63,8 @@ if __name__ == "__main__":
                 split = line.split(",")
                 image_name = "{:0=6d}".format(int(split[0]))
                 image_grp = subject_grp.create_group(image_name)
-                left_img_path = os.path.join(subject_data, "inpainted/left_new/", "left_{:0=6d}_rgb.png".format(int(split[0])))
-                right_img_path = os.path.join(subject_data, "inpainted/right_new/", "right_{:0=6d}_rgb.png".format(int(split[0])))
+                left_img_path = os.path.join(subject_data, "inpainted", "left", "left_{:0=6d}_rgb.png".format(int(split[0])))
+                right_img_path = os.path.join(subject_data, "inpainted", "right", "right_{:0=6d}_rgb.png".format(int(split[0])))
                 if os.path.exists(left_img_path) and os.path.exists(right_img_path):
                     head_phi = float(split[1].strip()[1:])
                     head_theta = float(split[2].strip()[:-1])

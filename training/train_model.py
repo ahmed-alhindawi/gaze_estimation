@@ -5,16 +5,16 @@ from functools import partial
 import h5py
 import pytorch_lightning as pl
 import torch
+import torchvision
 from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader
+from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
 from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet, ResNet18Dec
-from utils.GazeAngleAccuracy import GazeAngleAccuracy
-
 from gaze_estimation.training.LAMB import LAMB
-import torchvision
+from gaze_estimation.training.utils import GazeAngleAccuracyMetric
 
 
 class TrainRTGENE(pl.LightningModule):
@@ -42,7 +42,7 @@ class TrainRTGENE(pl.LightningModule):
                                                                                   std=[0.229, 0.224, 0.225])])
 
         self._criterion = _loss_fn.get(hparams.loss_fn)()
-        self._angle_acc = GazeAngleAccuracy()
+        self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
@@ -56,7 +56,7 @@ class TrainRTGENE(pl.LightningModule):
         left_patch, right_patch, headpose_label, gaze_labels = batch
 
         angle_out, bottle_neck = self.forward(left_patch, right_patch, headpose_label)
-        angle_acc = self._angle_acc(angle_out[:, :2], gaze_labels)
+        metrics = self._metrics(angle_out[:, :2], gaze_labels)
 
         l_reconstruction = self._left_reconstruction(bottle_neck)
         r_reconstruction = self._left_reconstruction(bottle_neck)
@@ -67,9 +67,12 @@ class TrainRTGENE(pl.LightningModule):
         angle_loss = self._angle_beta * self._criterion(angle_out, gaze_labels)
         loss = angle_loss + l_loss + r_loss
 
-        result = {"loss": loss, "angle_acc": angle_acc, "angle_loss": angle_loss, "reconstruction_loss": l_loss + r_loss, "angle_beta": self._angle_beta}
+        metrics["loss"] = loss
+        metrics["angle_loss"] = angle_loss
+        metrics["reconstruction_loss"] = l_loss + r_loss
+        metrics["angle_beta"] = self._angle_beta
 
-        return result, angle_out, l_reconstruction, r_reconstruction
+        return metrics, angle_out, l_reconstruction, r_reconstruction
 
     def training_step(self, batch, batch_idx):
         result, _, _, _, = self.shared_step(batch)
@@ -94,7 +97,7 @@ class TrainRTGENE(pl.LightningModule):
         return result["loss"]
 
     def on_train_epoch_end(self):
-        current_beta = -0.1 * (self.current_epoch - self.hparams.warm_up)
+        current_beta = -1 * (self.current_epoch - self.hparams.warm_up_50)
         self._angle_beta = 1.0 / (1.0 + torch.exp(torch.tensor(current_beta)))
 
     def configure_optimizers(self):
@@ -142,7 +145,7 @@ class TrainRTGENE(pl.LightningModule):
         parser.add_argument('--learning_rate', type=float, default=3e-4)
         parser.add_argument('--reconstruction_lambda', type=float, default=1e-2)  # balances empiric range of reconstruction loss with angular loss
         parser.add_argument('--model_base', choices=["vgg16", "resnet18"], default="resnet18")
-        parser.add_argument('--warm_up', type=int, default=100)
+        parser.add_argument('--warm_up_50', type=int, default=5, help="Epoch at which warm up phase increases to 50%")
         return parser
 
 
@@ -209,13 +212,13 @@ if __name__ == "__main__":
     for fold, (train_s, valid_s, test_s) in enumerate(zip(train_subs, valid_subs, test_subs)):
         model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
         # save all models
-        checkpoint_callback = ModelCheckpoint(monitor='valid_angle_acc', mode='min', verbose=False, save_top_k=10)
+        checkpoint_callback = ModelCheckpoint(monitor='valid_GazeAngleAccuracyMetric', mode='min', verbose=False, save_top_k=10)
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
                           precision=32,
                           callbacks=[checkpoint_callback],
                           min_epochs=hyperparams.min_epochs,
-                          max_epochs=hyperparams.max_epochs, )
+                          max_epochs=hyperparams.max_epochs)
         trainer.fit(model)
         # trainer.test()
