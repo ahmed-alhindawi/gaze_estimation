@@ -33,12 +33,21 @@ class TrainRTGENE(pl.LightningModule):
         }
 
         self._model = _models.get(hparams.model_base)()
+        self._left_reconstruction = ResNet18Dec()
+        self._right_reconstruction = ResNet18Dec()
+        self._left_reconstruction_loss = torch.nn.MSELoss()
+        self._right_reconstruction_loss = torch.nn.MSELoss()
+        self._reconstruction_transform = transforms.Compose([transforms.Resize(size=(64, 64)),
+                                                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                                  std=[0.229, 0.224, 0.225])])
+
         self._criterion = _loss_fn.get(hparams.loss_fn)()
         self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
         self.save_hyperparameters(hparams, ignore=["train_subjects", "validate_subjects", "test_subjects"])
+        self._angle_beta = torch.tensor(0.0, dtype=torch.float32)
 
     def forward(self, left_patch, right_patch, head_pose):
         return self._model(left_patch, right_patch, head_pose)
@@ -49,32 +58,48 @@ class TrainRTGENE(pl.LightningModule):
         angle_out, bottle_neck = self.forward(left_patch, right_patch, headpose_label)
         metrics = self._metrics(angle_out[:, :2], gaze_labels)
 
-        loss = self._criterion(angle_out, gaze_labels)
-        metrics["loss"] = loss
+        l_reconstruction = self._left_reconstruction(bottle_neck)
+        r_reconstruction = self._left_reconstruction(bottle_neck)
 
-        return metrics, angle_out
+        l_loss = self.hparams.reconstruction_lambda * self._left_reconstruction_loss(l_reconstruction, self._reconstruction_transform(left_patch))
+        r_loss = self.hparams.reconstruction_lambda * self._right_reconstruction_loss(r_reconstruction, self._reconstruction_transform(right_patch))
+
+        angle_loss = self._angle_beta * self._criterion(angle_out, gaze_labels)
+        loss = angle_loss + l_loss + r_loss
+
+        metrics["loss"] = loss
+        metrics["angle_loss"] = angle_loss
+        metrics["reconstruction_loss"] = l_loss + r_loss
+        metrics["angle_beta"] = self._angle_beta
+
+        return metrics, angle_out, l_reconstruction, r_reconstruction
 
     def training_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, _, _, = self.shared_step(batch)
         train_result = {"train_" + k: v for k, v in result.items()}
         self.log_dict(train_result)
         return result["loss"]
 
     def validation_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, left_reconstruction, right_reconstruction = self.shared_step(batch)
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
+
+        grid = torchvision.utils.make_grid(left_reconstruction[:64])
+        self.logger.experiment.add_image('left_generated', grid, self.current_epoch)
 
         return result["loss"]
 
     def test_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, _, _ = self.shared_step(batch)
         test_result = {"test_" + k: v for k, v in result.items()}
         self.log_dict(test_result)
         return result["loss"]
 
     def on_train_epoch_end(self) -> None:
-        self._metrics.reset()
+        current_beta = -1 * (self.current_epoch - self.hparams.warm_up_50)
+        self._angle_beta = 1.0 / (1.0 + torch.exp(torch.tensor(current_beta)))
+        self._metrics.reset()  # we're logging a dict, so we need to do this manually
 
     def configure_optimizers(self):
         params_to_update = []
@@ -119,7 +144,9 @@ class TrainRTGENE(pl.LightningModule):
         parser.add_argument('--loss_fn', choices=["mse", "mae", "huber", "smooth-l1"], default="mse")
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--learning_rate', type=float, default=3e-4)
+        parser.add_argument('--reconstruction_lambda', type=float, default=1e-2)  # balances empiric range of reconstruction loss with angular loss
         parser.add_argument('--model_base', choices=["vgg16", "resnet18"], default="resnet18")
+        parser.add_argument('--warm_up_50', type=int, default=5, help="Epoch at which warm up phase increases to 50%")
         return parser
 
 
@@ -186,7 +213,7 @@ if __name__ == "__main__":
     for fold, (train_s, valid_s, test_s) in enumerate(zip(train_subs, valid_subs, test_subs)):
         model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
         # save all models
-        checkpoint_callback = ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10)
+        checkpoint_callback = ModelCheckpoint(monitor='valid_GazeAngleAccuracyMetric', mode='min', verbose=False, save_top_k=10)
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
