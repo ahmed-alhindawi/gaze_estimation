@@ -8,7 +8,7 @@ from .AbstractModel import GazeEstimationAbstractModel
 
 class GazeEstimationModelResNet(GazeEstimationAbstractModel):
 
-    def __init__(self, num_out=2,):
+    def __init__(self, num_out=2):
         super(GazeEstimationModelResNet, self).__init__()
         _left_model = models.resnet18(pretrained=True)
         _right_model = models.resnet18(pretrained=True)
@@ -43,5 +43,5 @@ class GazeEstimationModelResNet(GazeEstimationAbstractModel):
         for param in self.right_features.parameters():
             param.requires_grad = True
 
-        self.xl, self.xr, self.concat, self.fc1, self.fc2 = GazeEstimationAbstractModel.create_fc_layers(in_features=_left_model.fc.in_features, out_features=num_out)
-
+        self.xl, self.xr, self.concat, self.fc1, self.fc2 = GazeEstimationAbstractModel.create_fc_layers(
+            in_features=_left_model.fc.in_features, out_features=num_out)

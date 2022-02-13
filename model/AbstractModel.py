@@ -6,31 +6,38 @@ import torch.nn as nn
 
 class GazeEstimationAbstractModel(nn.Module):
 
+    activation_functions = {
+        "relu": nn.ReLU,
+        "gelu": nn.GELU,
+        "tanhshrink": nn.Tanhshrink
+    }
+
     def __init__(self):
         super(GazeEstimationAbstractModel, self).__init__()
 
     @staticmethod
-    def create_fc_layers(in_features, out_features):
+    def create_fc_layers(in_features, out_features, activation="gelu"):
         x_l = nn.Sequential(
             nn.Linear(in_features, 1024),
-            nn.BatchNorm1d(1024, momentum=0.99, eps=1e-3),
-            nn.ReLU(inplace=True)
+            nn.BatchNorm1d(1024),
+            nn.GELU()
         )
         x_r = nn.Sequential(
             nn.Linear(in_features, 1024),
-            nn.BatchNorm1d(1024, momentum=0.99, eps=1e-3),
-            nn.ReLU(inplace=True)
+            nn.BatchNorm1d(1024),
+            nn.GELU()
         )
 
         concat = nn.Sequential(
             nn.Linear(2048, 512),
-            nn.BatchNorm1d(512, momentum=0.99, eps=1e-3),
-            nn.ReLU(inplace=True)
+            nn.BatchNorm1d(512),
+            nn.GELU()
+
         )
 
         fc1 = nn.Sequential(
             nn.Linear(514, 256),
-            nn.ReLU(inplace=True),
+            nn.Tanhshrink()
         )
 
         fc2 = nn.Sequential(
