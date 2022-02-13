@@ -1,3 +1,4 @@
+import math
 import os
 from argparse import ArgumentParser
 from functools import partial
@@ -6,7 +7,7 @@ import h5py
 import pytorch_lightning as pl
 import torch
 import torchvision
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging
 from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
@@ -46,7 +47,7 @@ class TrainRTGENE(pl.LightningModule):
     def shared_step(self, batch):
         left_patch, right_patch, headpose_label, gaze_labels = batch
 
-        angle_out, bottle_neck = self.forward(left_patch, right_patch, headpose_label)
+        angle_out, _ = self.forward(left_patch, right_patch, headpose_label)
         metrics = self._metrics(angle_out[:, :2], gaze_labels)
 
         loss = self._criterion(angle_out, gaze_labels)
@@ -74,17 +75,7 @@ class TrainRTGENE(pl.LightningModule):
         return result["loss"]
 
     def on_train_epoch_end(self) -> None:
-        self._metrics.reset()
-
-    def configure_optimizers(self):
-        params_to_update = []
-        for name, param in self._model.named_parameters():
-            if param.requires_grad:
-                params_to_update.append(param)
-
-        optimizer = LAMB(params_to_update, lr=self.hparams.learning_rate)
-
-        return optimizer
+        self._metrics.reset()  # we're logging a dict, so we need to do this manually
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
@@ -113,18 +104,78 @@ class TrainRTGENE(pl.LightningModule):
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._test_subjects, transform=transform)
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
+    def configure_optimizers(self):
+        def linear_warmup_decay(warmup_steps, total_steps, cosine=True):
+            """
+            Linear warmup for warmup_steps, optionally with cosine annealing or
+            linear decay to 0 at total_steps
+
+            Adapted from grid_ai/aavae
+            """
+
+            def fn(step):
+                if step < warmup_steps:
+                    return float(step) / float(max(1, warmup_steps))
+
+                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+                if cosine:
+                    # cosine decay
+                    return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+                # linear decay
+                return 1.0 - progress
+
+            return fn
+
+        params_to_update = []
+        for name, param in self._model.named_parameters():
+            if param.requires_grad:
+                params_to_update.append(param)
+
+        if self.hparams.optimiser == "adam_w":
+            optimizer = torch.optim.AdamW(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
+        elif self.hparams.optimiser == "lamb":
+            optimizer = LAMB(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
+        else:
+            raise NotImplementedError("Only 'adam_w' and 'lamb' optimisers have been implemented")
+
+        if self.hparams.optimiser_schedule:
+
+            warmup_steps = (81152 / self.hparams.batch_size) * self.hparams.warmup_epochs
+            total_steps = (81152 / self.hparams.batch_size) * self.hparams.max_epochs
+
+            scheduler = {
+                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer,
+                                                               linear_warmup_decay(warmup_steps, total_steps, self.hparams.cosine_decay)),
+                "interval": "step",
+                "frequency": 1,
+            }
+
+            return [optimizer], [scheduler]
+        else:
+            return optimizer
+
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
         parser.add_argument('--loss_fn', choices=["mse", "mae", "huber", "smooth-l1"], default="mse")
         parser.add_argument('--batch_size', default=128, type=int)
-        parser.add_argument('--learning_rate', type=float, default=3e-4)
+        parser.add_argument('--learning_rate', type=float, default=3e-2)
         parser.add_argument('--model_base', choices=["vgg16", "resnet18"], default="resnet18")
+        parser.add_argument('--weight_decay', default=1e-3, type=float)
+        parser.add_argument('--optimiser_schedule', type=bool, default=False)
+        parser.add_argument('--warmup_epochs', type=int, default=5)
+        parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
+        parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
+        parser.add_argument('--decay_reconstruction_loss', type=bool, default=True)
+        parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
+        parser.set_defaults(cosine_decay=True)
         return parser
 
 
 if __name__ == "__main__":
     from pytorch_lightning import Trainer
+    from gaze_estimation.training.utils import print_args
     import psutil
 
     root_dir = os.path.dirname(os.path.realpath(__file__))
@@ -145,6 +196,7 @@ if __name__ == "__main__":
     model_parser = TrainRTGENE.add_model_specific_args(root_parser)
     hyperparams = model_parser.parse_args()
     hyperparams.hdf5_file = os.path.abspath(os.path.expanduser(hyperparams.hdf5_file))
+    print_args(hyperparams)
 
     pl.seed_everything(hyperparams.seed)
 
@@ -185,14 +237,18 @@ if __name__ == "__main__":
 
     for fold, (train_s, valid_s, test_s) in enumerate(zip(train_subs, valid_subs, test_subs)):
         model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
-        # save all models
-        checkpoint_callback = ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10)
+
+        # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
+        checkpoint_callback = ModelCheckpoint(monitor='valid_GazeAngleAccuracyMetric', mode='min', verbose=False, save_top_k=10,
+                                              filename="epoch={epoch}-valid_loss={valid_loss:.2f}-valid_angle_acc={valid_GazeAngleAccuracyMetric:.2f}")
+        learning_rate_callback = LearningRateMonitor()
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
                           precision=32,
-                          callbacks=[checkpoint_callback],
+                          callbacks=[checkpoint_callback, learning_rate_callback],
                           min_epochs=hyperparams.min_epochs,
+                          log_every_n_steps=10,
                           max_epochs=hyperparams.max_epochs)
         trainer.fit(model)
         # trainer.test()
