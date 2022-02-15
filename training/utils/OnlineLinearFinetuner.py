@@ -17,14 +17,14 @@ class OnlineFineTuner(Callback):
     def __init__(self, encoder_output_dim: int = 128) -> None:
         super().__init__()
 
-        self.optimizer: torch.optim.Optimizer
+        self.optimizer: Optional[torch.optim.Optimizer] = None
         self.encoder_output_dim = encoder_output_dim
         self.metrics = MetricCollection([MeanSquaredError(), GazeAngleAccuracyMetric()])
 
     def on_pretrain_routine_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         # add linear_eval layer and optimizer
-        pl_module.online_finetuner = SSLEvaluator(n_input=self.encoder_output_dim).to(pl_module.device)
-        self.optimizer = torch.optim.Adam(pl_module.online_finetuner.parameters(), lr=1e-4)
+        pl_module.online_finetuner = MLPEvaluator(n_input=self.encoder_output_dim).to(pl_module.device)
+        self.optimizer = torch.optim.Adam(pl_module.online_finetuner.parameters(), lr=1e-4, weight_decay=1e-5)
         self.metrics.to(pl_module.device)
 
     @staticmethod
@@ -95,8 +95,8 @@ def set_training(module: nn.Module, mode: bool):
         module.train(original_mode)
 
 
-class SSLEvaluator(nn.Module):
-    def __init__(self, n_input: int = 128, n_classes=2, n_hidden=512, p=0.1):
+class MLPEvaluator(nn.Module):
+    def __init__(self, n_input: int = 128, n_classes=2, n_hidden=512, p=0.05):
         super().__init__()
         self.n_input = n_input
         self.n_classes = n_classes

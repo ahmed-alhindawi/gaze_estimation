@@ -37,7 +37,7 @@ class GazeEncoder(nn.Module):
 
 class GazeDecoder(nn.Module):
 
-    def __init__(self, latent_dim: int=128):
+    def __init__(self, latent_dim: int = 128):
         super(GazeDecoder, self).__init__()
         # Build Decoder
         modules = []
@@ -51,14 +51,14 @@ class GazeDecoder(nn.Module):
                 nn.Sequential(
                     nn.ConvTranspose2d(curr_dim, next_dim, kernel_size=3, stride=2, padding=1, output_padding=1),
                     nn.BatchNorm2d(next_dim),
-                    nn.LeakyReLU())
+                    nn.GELU())
             )
 
         self.decoder = nn.Sequential(*modules)
         self.final_layer = nn.Sequential(
             nn.ConvTranspose2d(hidden_dims[-1], hidden_dims[-1], kernel_size=3, stride=2, padding=1, output_padding=1),
             nn.BatchNorm2d(hidden_dims[-1]),
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Conv2d(hidden_dims[-1], out_channels=3, kernel_size=3, padding=1),
             nn.Tanh())
 
@@ -68,16 +68,3 @@ class GazeDecoder(nn.Module):
         x = self.decoder(x)
         x = self.final_layer(x)
         return x
-
-
-if __name__ == "__main__":
-    enco = GazeEncoder(in_channels=3, latent_dim=128)
-    deco = GazeDecoder(latent_dim=128)
-    x = torch.rand(1, 3, 64, 64)
-    mu, logvar = enco(x)
-
-    std = torch.exp(0.5 * logvar)
-    eps = torch.randn_like(std)
-    z = eps * std + mu
-    y = deco(z)
-    print(y.shape)
