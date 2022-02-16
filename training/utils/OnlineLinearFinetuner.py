@@ -20,6 +20,7 @@ class OnlineFineTuner(Callback):
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.encoder_output_dim = encoder_output_dim
         self.metrics = MetricCollection([MeanSquaredError(), GazeAngleAccuracyMetric()])
+        self.loss_fn = torch.nn.SmoothL1Loss(beta=0.1)  # roughly 6 degrees
 
     def on_pretrain_routine_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         # add linear_eval layer and optimizer
@@ -44,7 +45,7 @@ class OnlineFineTuner(Callback):
                 feats, _, _ = pl_module(x)
 
         preds = pl_module.online_finetuner(feats, head_pose)
-        loss = F.mse_loss(preds, gaze_pose)
+        loss = self.loss_fn(preds, gaze_pose)
 
         metric_results = self.metrics(preds, gaze_pose)
         metric_results["loss"] = loss
@@ -80,12 +81,6 @@ class OnlineFineTuner(Callback):
 
 @contextmanager
 def set_training(module: nn.Module, mode: bool):
-    """Context manager to set training mode.
-    When exit, recover the original training mode.
-    Args:
-        module: module to set training mode
-        mode: whether to set training mode (True) or evaluation mode (False).
-    """
     original_mode = module.training
 
     try:

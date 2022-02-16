@@ -15,7 +15,7 @@ from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
-from gaze_estimation.model import GazeEncoder, GazeDecoder
+from gaze_estimation.model import GazeEncoder, ResNet18Dec
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
 
@@ -26,7 +26,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         super(TrainRTGENEVAE, self).__init__()
 
         self.encoder = GazeEncoder(latent_dim=hparams.latent_dim)
-        self.decoder = GazeDecoder(latent_dim=hparams.latent_dim)
+        self.decoder = ResNet18Dec(z_dim=hparams.latent_dim)
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects

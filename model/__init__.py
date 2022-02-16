@@ -1,4 +1,4 @@
 from .GazeVGG import *
-from .GazeResNet import *
+from .GazeResNetMLP import *
 from .GazeDecoder import ResNet18Dec
-from .GazeVAE import GazeEncoder, GazeDecoder
+from .GazeResNetEncoder import GazeEncoder, GazeDecoder
