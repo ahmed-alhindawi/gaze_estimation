@@ -240,7 +240,7 @@ if __name__ == "__main__":
 
         # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10,
-                                     filename="epoch={epoch}-valid_loss={valid_loss:.2f}"),
+                                     filename="epoch={epoch}-valid_loss={valid_loss:.2f}", save_last=True),
                      LearningRateMonitor(),
                      OnlineFineTuner(encoder_output_dim=hyperparams.latent_dim)]
 
