@@ -67,7 +67,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        grid = torchvision.utils.make_grid(recon[:64])
+        grid = torchvision.utils.make_grid(recon[:64], normalize=True)
         self.logger.experiment.add_image('reconstruction', grid, self.current_epoch)
 
         return result["loss"]
