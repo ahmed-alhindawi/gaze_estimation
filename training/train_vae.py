@@ -179,7 +179,6 @@ class TrainRTGENEVAE(pl.LightningModule):
 
 if __name__ == "__main__":
     from pytorch_lightning import Trainer
-    from pytorch_lightning.strategies import DDPStrategy
     from gaze_estimation.training.utils import print_args
     import psutil
 
@@ -252,7 +251,7 @@ if __name__ == "__main__":
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
-                          strategy=DDPStrategy(find_unused_parameters=False) if hyperparams.distributed_strategy == "ddp" else None,
+                          strategy=hyperparams.distributed_strategy,
                           precision=hyperparams.precision,
                           callbacks=callbacks,
                           min_epochs=hyperparams.min_epochs,
