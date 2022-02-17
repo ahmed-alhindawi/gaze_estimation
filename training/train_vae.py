@@ -105,28 +105,30 @@ class TrainRTGENEVAE(pl.LightningModule):
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._test_subjects, transform=transform)
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
+    @staticmethod
+    def linear_warmup_decay(warmup_steps, total_steps, cosine=True):
+        """
+        Linear warmup for warmup_steps, optionally with cosine annealing or
+        linear decay to 0 at total_steps
+
+        Adapted from grid_ai/aavae
+        """
+
+        def fn(step):
+            if step < warmup_steps:
+                return float(step) / float(max(1, warmup_steps))
+
+            progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            if cosine:
+                # cosine decay
+                return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+            # linear decay
+            return 1.0 - progress
+
+        return fn
+
     def configure_optimizers(self):
-        def linear_warmup_decay(warmup_steps, total_steps, cosine=True):
-            """
-            Linear warmup for warmup_steps, optionally with cosine annealing or
-            linear decay to 0 at total_steps
-
-            Adapted from grid_ai/aavae
-            """
-
-            def fn(step):
-                if step < warmup_steps:
-                    return float(step) / float(max(1, warmup_steps))
-
-                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                if cosine:
-                    # cosine decay
-                    return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-                # linear decay
-                return 1.0 - progress
-
-            return fn
 
         params_to_update = []
         for name, param in itertools.chain(self.encoder.named_parameters(), self.decoder.named_parameters()):
