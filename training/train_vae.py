@@ -179,6 +179,7 @@ class TrainRTGENEVAE(pl.LightningModule):
 
 if __name__ == "__main__":
     from pytorch_lightning import Trainer
+    from pytorch_lightning.strategies import DDPStrategy
     from gaze_estimation.training.utils import print_args
     import psutil
 
@@ -194,6 +195,8 @@ if __name__ == "__main__":
     root_parser.add_argument('--seed', type=int, default=0)
     root_parser.add_argument('--min_epochs', type=int, default=5, help="Number of Epochs to perform at a minimum")
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
+    root_parser.add_argument('--distributed_strategy', choices=["none", "ddp"], default="none")
+    root_parser.add_argument('--precision', choices=[16, 32], default=32)
     root_parser.set_defaults(k_fold_validation=True)
 
     model_parser = TrainRTGENEVAE.add_model_specific_args(root_parser)
@@ -249,7 +252,8 @@ if __name__ == "__main__":
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
-                          precision=32,
+                          strategy=DDPStrategy(find_unused_parameters=False) if hyperparams.distributed_strategy == "ddp" else None,
+                          precision=hyperparams.precision,
                           callbacks=callbacks,
                           min_epochs=hyperparams.min_epochs,
                           log_every_n_steps=10,
