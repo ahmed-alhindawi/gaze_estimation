@@ -192,7 +192,7 @@ if __name__ == "__main__":
     root_parser.add_argument('--seed', type=int, default=0)
     root_parser.add_argument('--min_epochs', type=int, default=5, help="Number of Epochs to perform at a minimum")
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
-    root_parser.add_argument('--distributed_strategy', choices=["none", "ddp"], default="none")
+    root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
     root_parser.add_argument('--precision', choices=[16, 32], default=32)
     root_parser.set_defaults(k_fold_validation=True)
 
@@ -250,7 +250,6 @@ if __name__ == "__main__":
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
                           strategy=hyperparams.distributed_strategy,
-                          plugins=DDPPlugin(find_unused_parameters=False) if hyperparams.distributed_strategy == "ddp" else None,
                           precision=hyperparams.precision,
                           callbacks=callbacks,
                           min_epochs=hyperparams.min_epochs,
