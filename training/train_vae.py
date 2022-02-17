@@ -113,8 +113,10 @@ class TrainRTGENEVAE(pl.LightningModule):
 
         Adapted from grid_ai/aavae
         """
+        # this sucks
+        global optimiser_schedule_fn
 
-        def fn(step):
+        def optimiser_schedule_fn(step):
             if step < warmup_steps:
                 return float(step) / float(max(1, warmup_steps))
 
@@ -126,7 +128,7 @@ class TrainRTGENEVAE(pl.LightningModule):
             # linear decay
             return 1.0 - progress
 
-        return fn
+        return optimiser_schedule_fn
 
     def configure_optimizers(self):
 
