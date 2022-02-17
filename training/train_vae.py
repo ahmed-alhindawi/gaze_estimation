@@ -181,8 +181,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.realpath(__file__))
 
     root_parser = ArgumentParser(add_help=False)
-    root_parser.add_argument('--gpu', type=int, default=1,
-                             help='gpu to use, can be repeated for mutiple gpus i.e. --gpu 1 --gpu 2', action="append")
+    root_parser.add_argument('--gpu', type=int, default=-1, help="number of gpus to use")
     root_parser.add_argument('--hdf5_file', type=str, default="rtgene_dataset.hdf5")
     root_parser.add_argument('--dataset_type', type=str, choices=["rt_gene", "other"], default="rt_gene")
     root_parser.add_argument('--num_io_workers', default=psutil.cpu_count(logical=False), type=int)
