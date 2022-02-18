@@ -82,9 +82,9 @@ class TrainRTGENEVAE(pl.LightningModule):
         p, q, z = self.sample(mu, logvar)
         kld = self.kl_divergence_mc(p, q, z).mean()
 
-        loss = recons_loss + self.hparams.kld_weight * kld
+        loss = self.hparams.kld_weight * kld - recons_loss
         result = {"kld_loss": kld,
-                  "mse_loss": recons_loss,
+                  "mse_loss": -recons_loss,
                   "loss": loss}
         return result, reconstruction
 
