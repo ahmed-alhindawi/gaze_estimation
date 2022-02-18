@@ -95,7 +95,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
         # kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
         p, q, z = self.sample(mu, logvar)
-        kld = self.kl_divergence_analytic(p, q, z)
+        kld = self.kl_divergence_mc(p, q, z).mean()
 
         loss = self.hparams.kld_weight * kld - recons_loss
         result = {"kld_loss": kld,
@@ -114,7 +114,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        grid = torchvision.utils.make_grid(recon[:64])
+        grid = torchvision.utils.make_grid(recon[:64], normalize=True, scale_each=True)
         self.logger.experiment.add_image('reconstruction', grid, self.current_epoch)
 
         return result["loss"]
