@@ -24,8 +24,8 @@ class TrainRTGENEVAE(pl.LightningModule):
         super(TrainRTGENEVAE, self).__init__()
 
         extract_img_fn = {
-            "left": TrainRTGENEVAE._extract_left_img,
-            "right": TrainRTGENEVAE._extract_right_img
+            "left": lambda x: x[0],
+            "right": lambda x: x[1]
         }
 
         self.encoder = GazeEncoder(backend=GazeEncoder.GazeEncoderBackend.Resnet18)  # consider adding more backends
@@ -40,16 +40,6 @@ class TrainRTGENEVAE(pl.LightningModule):
     def forward(self, img):
         result = self.encoder(img)
         return result
-
-    @staticmethod
-    def _extract_left_img(batch):
-        img, _, _, _ = batch
-        return img
-
-    @staticmethod
-    def _extract_right_img(batch):
-        _, img, _, _ = batch
-        return img
 
     def shared_step(self, batch):
         img = self._extract_fn(batch)
@@ -263,7 +253,7 @@ if __name__ == "__main__":
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
-                          strategy=hyperparams.distributed_strategy,
+                          strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
                           precision=hyperparams.precision,
                           callbacks=callbacks,
                           min_epochs=hyperparams.min_epochs,
