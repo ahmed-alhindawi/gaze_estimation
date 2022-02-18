@@ -17,10 +17,10 @@ class RTGENEH5Dataset(data.Dataset):
 
         assert subject_list is not None, "Must pass a list of subjects to load the data for"
 
-        if self._transform is None:
-            self._transform = transforms.Compose([transforms.ToTensor(),
-                                                  transforms.Resize((36, 60), transforms.InterpolationMode.NEAREST),
-                                                  transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+        assert self._transform is not None
+        self._base_transform = transforms.Compose([transforms.ToTensor(),
+                                                   transforms.Resize((64, 64), transforms.InterpolationMode.NEAREST),
+                                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
         wanted_subjects = ["s{:03d}".format(_i) for _i in subject_list]
 
@@ -51,5 +51,7 @@ class RTGENEH5Dataset(data.Dataset):
             # Load data and get label
             transformed_left = self._transform(left_img)
             transformed_right = self._transform(right_img)
+            base_left = self._base_transform(left_img)
+            base_right = self._base_transform(right_img)
 
-            return transformed_left, transformed_right, ground_truth_headpose, ground_truth_gaze
+            return base_left, base_right, transformed_left, transformed_right, ground_truth_headpose, ground_truth_gaze

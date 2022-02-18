@@ -24,8 +24,8 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         super(TrainRTGENEAAVAE, self).__init__()
 
         extract_img_fn = {
-            "left": lambda x: x[0],
-            "right": lambda x: x[1]
+            "left": lambda x: (x[0], x[2]),
+            "right": lambda x: (x[1], x[3])
         }
 
         self.encoder = GazeEncoder(backend=GazeEncoder.GazeEncoderBackend.Resnet18)  # consider adding more backends
@@ -36,13 +36,6 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         self._test_subjects = test_subjects
         self._extract_fn = extract_img_fn[hparams.eye_laterality]
         self.save_hyperparameters(hparams, ignore=["train_subjects", "validate_subjects", "test_subjects"])
-
-        self._augmentations = transforms.Compose([transforms.RandomResizedCrop(size=(64, 64), scale=(0.5, 1.3)),
-                                                  transforms.RandomGrayscale(p=0.1),
-                                                  transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
-                                                  transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
-                                                  transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                                       std=[0.229, 0.224, 0.225])])
 
     def forward(self, img):
         result = self.encoder(img)
@@ -82,8 +75,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         return p, q, z
 
     def shared_step(self, batch):
-        orig_img = self._extract_fn(batch)
-        augm_img = self._augmentations(orig_img)
+        orig_img, augm_img = self._extract_fn(batch)
         encoding = self.forward(augm_img)
         mu, logvar = self.projection(encoding)
         std = torch.exp(0.5 * logvar)
@@ -101,33 +93,39 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         result = {"kld_loss": kld,
                   "mse_loss": -recons_loss,
                   "loss": loss}
-        return result, reconstruction
+        return result, reconstruction, augm_img
 
     def training_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, _ = self.shared_step(batch)
         train_result = {"train_" + k: v for k, v in result.items()}
         self.log_dict(train_result)
         return result["loss"]
 
     def validation_step(self, batch, batch_idx):
-        result, recon = self.shared_step(batch)
+        result, recons, aug_imgs = self.shared_step(batch)
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        grid = torchvision.utils.make_grid(recon[:64], normalize=True, scale_each=True)
-        self.logger.experiment.add_image('reconstruction', grid, self.current_epoch)
+        aug_grid = torchvision.utils.make_grid(aug_imgs, normalize=True, scale_each=True)
+        self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
+
+        recon_grid = torchvision.utils.make_grid(recons, normalize=True, scale_each=True)
+        self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
 
         return result["loss"]
 
     def test_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, _ = self.shared_step(batch)
         test_result = {"test_" + k: v for k, v in result.items()}
         self.log_dict(test_result)
         return result["loss"]
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(64, 64)),
+                                        transforms.RandomResizedCrop(size=(64, 64), scale=(0.8, 1.2)),
+                                        transforms.RandomGrayscale(p=0.1),
+                                        transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                        transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._train_subjects, transform=transform)
@@ -243,7 +241,6 @@ if __name__ == "__main__":
     model_parser = TrainRTGENEAAVAE.add_model_specific_args(root_parser)
     hyperparams = model_parser.parse_args()
     hyperparams.hdf5_file = os.path.abspath(os.path.expanduser(hyperparams.hdf5_file))
-    hyperparams.learning_rate = hyperparams.learning_rate * (hyperparams.batch_size/256)
     print_args(hyperparams)
 
     pl.seed_everything(hyperparams.seed)
