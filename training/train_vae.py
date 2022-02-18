@@ -77,7 +77,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         z = eps * std + mu
         reconstruction = self.decoder(z)
 
-        recons_loss = self.gaussian_likelihood(img, reconstruction)
+        recons_loss = self.gaussian_likelihood(img, reconstruction).mean()
 
         p, q, z = self.sample(mu, logvar)
         kld = self.kl_divergence_mc(p, q, z).mean()
