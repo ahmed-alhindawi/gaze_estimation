@@ -37,20 +37,28 @@ class TrainRTGENEVAE(pl.LightningModule):
         self._extract_fn = extract_img_fn[hparams.eye_laterality]
         self.save_hyperparameters(hparams, ignore=["train_subjects", "validate_subjects", "test_subjects"])
 
+        self._augmentations = transforms.Compose([transforms.RandomResizedCrop(size=(64, 64), scale=(0.5, 1.3)),
+                                                  transforms.RandomGrayscale(p=0.1),
+                                                  transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                                  transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
+                                                  transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                       std=[0.229, 0.224, 0.225])])
+
     def forward(self, img):
         result = self.encoder(img)
         return result
 
     def shared_step(self, batch):
-        img = self._extract_fn(batch)
-        encoding = self.forward(img)
+        orig_img = self._extract_fn(batch)
+        augm_img = self._augmentations(orig_img)
+        encoding = self.forward(augm_img)
         mu, logvar = self.projection(encoding)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         z = eps * std + mu
         reconstruction = self.decoder(z)
 
-        recons_loss = F.mse_loss(img, reconstruction)
+        recons_loss = F.mse_loss(orig_img, reconstruction)
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
 
@@ -71,7 +79,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        grid = torchvision.utils.make_grid(recon[:64], normalize=True)
+        grid = torchvision.utils.make_grid(recon[:64], normalize=True, scale_each=True)
         self.logger.experiment.add_image('reconstruction', grid, self.current_epoch)
 
         return result["loss"]
@@ -84,10 +92,7 @@ class TrainRTGENEVAE(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.RandomResizedCrop(size=(64, 64), scale=(0.5, 1.3)),
-                                        transforms.RandomGrayscale(p=0.1),
-                                        transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
-                                        transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
+                                        transforms.Resize(size=(64, 64)),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._train_subjects, transform=transform)
@@ -115,7 +120,7 @@ class TrainRTGENEVAE(pl.LightningModule):
             Linear warmup for warmup_steps, optionally with cosine annealing or
             linear decay to 0 at total_steps
 
-            Adapted from grid_ai/aavae
+            Adapted from grid_ai/vae
             """
 
             # this sucks
@@ -172,7 +177,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
         parser.add_argument('--decay_reconstruction_loss', type=bool, default=True)
         parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
-        parser.add_argument('--kld_weight', type=float, default=1)  # default for vae, increase for beta-vae, decrease for vae
+        parser.add_argument('--kld_weight', type=float, default=0.01)
         parser.add_argument('--latent_dim', type=int, default=128)
         parser.set_defaults(cosine_decay=True)
         return parser
