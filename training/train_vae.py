@@ -80,7 +80,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         recons_loss = self.gaussian_likelihood(img, reconstruction)
 
         p, q, z = self.sample(mu, logvar)
-        kld = self.kl_divergence_mc(p, q, z)
+        kld = self.kl_divergence_mc(p, q, z).mean()
 
         loss = recons_loss + self.hparams.kld_weight * kld
         result = {"kld_loss": kld,
