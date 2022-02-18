@@ -66,6 +66,12 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         return kl
 
     @staticmethod
+    def kl_divergence_analytic(p, q, z):
+        kl = torch.distributions.kl.kl_divergence(q, p).sum(dim=-1)
+
+        return kl
+
+    @staticmethod
     def sample(z_mu, z_var, eps=1e-6):
         std = torch.exp(z_var / 2.) + eps
 
@@ -89,7 +95,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
         # kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
         p, q, z = self.sample(mu, logvar)
-        kld = self.kl_divergence_mc(p, q, z)
+        kld = self.kl_divergence_analytic(p, q, z)
 
         loss = self.hparams.kld_weight * kld - recons_loss
         result = {"kld_loss": kld,
