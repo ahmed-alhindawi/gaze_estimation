@@ -259,7 +259,7 @@ if __name__ == "__main__":
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10,
                                      filename="epoch={epoch}-valid_loss={valid_loss:.2f}", save_last=True),
                      LearningRateMonitor(),
-                     OnlineFineTuner(encoder_output_dim=hyperparams.latent_dim)]
+                     OnlineFineTuner(encoder_output_dim=512)]
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
