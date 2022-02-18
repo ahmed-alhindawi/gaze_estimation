@@ -122,7 +122,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.RandomResizedCrop(size=(64, 64), scale=(0.8, 1.2), interpolation=transforms.InterpolationMode.NEAREST),
+                                        transforms.RandomResizedCrop(size=(32, 32), scale=(0.8, 1.2), interpolation=transforms.InterpolationMode.NEAREST),
                                         transforms.RandomGrayscale(p=0.1),
                                         transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
                                         transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
@@ -133,7 +133,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
     def val_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(64, 64)),
+                                        transforms.Resize(size=(32, 32)),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._validate_subjects, transform=transform)
@@ -141,7 +141,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
     def test_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(64, 64)),
+                                        transforms.Resize(size=(32, 32)),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._test_subjects, transform=transform)
@@ -204,12 +204,11 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         parser = ArgumentParser(parents=[parent_parser])
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--learning_rate', type=float, default=2.5e-4)
-        parser.add_argument('--weight_decay', default=1e-2, type=float)
+        parser.add_argument('--weight_decay', default=0, type=float)
         parser.add_argument('--optimiser_schedule', action="store_true", default=False)
         parser.add_argument('--warmup_epochs', type=int, default=10)
         parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
         parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
-        parser.add_argument('--decay_reconstruction_loss', action="store_true", default=False)
         parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
         parser.add_argument('--kld_weight', type=float, default=0)
         parser.add_argument('--latent_dim', type=int, default=128)
@@ -294,7 +293,6 @@ if __name__ == "__main__":
                           strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
                           precision=int(hyperparams.precision),
                           callbacks=callbacks,
-                          min_epochs=hyperparams.min_epochs,
                           log_every_n_steps=10,
                           max_epochs=hyperparams.max_epochs)
         trainer.fit(model)

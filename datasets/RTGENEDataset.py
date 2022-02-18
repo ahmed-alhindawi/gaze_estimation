@@ -19,7 +19,7 @@ class RTGENEH5Dataset(data.Dataset):
 
         assert self._transform is not None
         self._base_transform = transforms.Compose([transforms.ToTensor(),
-                                                   transforms.Resize((64, 64), transforms.InterpolationMode.NEAREST),
+                                                   transforms.Resize((32, 32), transforms.InterpolationMode.NEAREST),
                                                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
         wanted_subjects = ["s{:03d}".format(_i) for _i in subject_list]
