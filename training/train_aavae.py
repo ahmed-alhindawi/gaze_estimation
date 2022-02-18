@@ -278,7 +278,7 @@ if __name__ == "__main__":
             test_subs.append([keys[0]])
 
     for fold, (train_s, valid_s, test_s) in enumerate(zip(train_subs, valid_subs, test_subs)):
-        model = TrainRTGENEVAE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
+        model = TrainRTGENEAAVAE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
 
         # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10,
