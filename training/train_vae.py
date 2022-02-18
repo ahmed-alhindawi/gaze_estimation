@@ -2,20 +2,18 @@ import itertools
 import math
 import os
 from argparse import ArgumentParser
-from functools import partial
 
 import h5py
 import pytorch_lightning as pl
 import torch
 from torch.nn import functional as F
 import torchvision
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
-from gaze_estimation.model import GazeEncoder, ResNet18Dec
+from gaze_estimation.model import GazeEncoder, ResNet18Dec, ProjectionHeadVAE
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
 
@@ -25,25 +23,41 @@ class TrainRTGENEVAE(pl.LightningModule):
     def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
         super(TrainRTGENEVAE, self).__init__()
 
-        self.encoder = GazeEncoder(latent_dim=hparams.latent_dim)
+        extract_img_fn = {
+            "left": TrainRTGENEVAE._extract_left_img,
+            "right": TrainRTGENEVAE._extract_right_img
+        }
+
+        self.encoder = GazeEncoder(backend=GazeEncoder.GazeEncoderBackend.Resnet18)  # consider adding more backends
+        self.projection = ProjectionHeadVAE(output_dim=hparams.latent_dim)
         self.decoder = ResNet18Dec(z_dim=hparams.latent_dim)
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
+        self._extract_fn = extract_img_fn[hparams.eye_laterality]
         self.save_hyperparameters(hparams, ignore=["train_subjects", "validate_subjects", "test_subjects"])
 
     def forward(self, img):
-        mu, logvar = self.encoder(img)
+        result = self.encoder(img)
+        return result
 
+    @staticmethod
+    def _extract_left_img(batch):
+        img, _, _, _ = batch
+        return img
+
+    @staticmethod
+    def _extract_right_img(batch):
+        _, img, _, _ = batch
+        return img
+
+    def shared_step(self, batch):
+        img = self._extract_fn(batch)
+        encoding = self.forward(img)
+        mu, logvar = self.projection(encoding)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         z = eps * std + mu
-        return z, mu, logvar
-
-    def shared_step(self, batch):
-        img, _, _, _ = batch
-
-        z, mu, logvar = self.forward(img)
         reconstruction = self.decoder(z)
 
         recons_loss = F.mse_loss(img, reconstruction)
@@ -176,7 +190,6 @@ class TrainRTGENEVAE(pl.LightningModule):
 
 if __name__ == "__main__":
     from pytorch_lightning import Trainer
-    from pytorch_lightning.plugins import DDPPlugin
     from gaze_estimation.training.utils import print_args
     import psutil
 
@@ -186,6 +199,7 @@ if __name__ == "__main__":
     root_parser.add_argument('--gpu', type=int, default=-1, help="number of gpus to use")
     root_parser.add_argument('--hdf5_file', type=str, default="rtgene_dataset.hdf5")
     root_parser.add_argument('--dataset_type', type=str, choices=["rt_gene", "other"], default="rt_gene")
+    root_parser.add_argument('--eye_laterality', type=str, choices=["left", "right"], default="right")
     root_parser.add_argument('--num_io_workers', default=psutil.cpu_count(logical=False), type=int)
     root_parser.add_argument('--k_fold_validation', action="store_true", dest="k_fold_validation")
     root_parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")

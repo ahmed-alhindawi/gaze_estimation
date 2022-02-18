@@ -42,7 +42,7 @@ class OnlineFineTuner(Callback):
 
         with torch.no_grad():
             with set_training(pl_module, False):
-                feats, _, _ = pl_module(x)
+                feats = pl_module(x)
 
         preds = pl_module.online_finetuner(feats, head_pose)
         loss = self.loss_fn(preds, gaze_pose)
