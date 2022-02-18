@@ -49,6 +49,25 @@ class TrainRTGENEVAE(pl.LightningModule):
         # sum over dimensions
         return log_pxz.sum(dim=(1, 2, 3))
 
+    @staticmethod
+    def kl_divergence_mc(p, q, z):
+        log_pz = p.log_prob(z)
+        log_qz = q.log_prob(z)
+
+        kl = (log_qz - log_pz).sum(dim=-1)
+
+        return kl
+
+    @staticmethod
+    def sample(z_mu, z_var, eps=1e-6):
+        std = torch.exp(z_var / 2.) + eps
+
+        p = torch.distributions.Normal(torch.zeros_like(z_mu), torch.ones_like(std))
+        q = torch.distributions.Normal(z_mu, std)
+        z = q.rsample()
+
+        return p, q, z
+
     def shared_step(self, batch):
         img = self._extract_fn(batch)
         encoding = self.forward(img)
@@ -60,10 +79,11 @@ class TrainRTGENEVAE(pl.LightningModule):
 
         recons_loss = self.gaussian_likelihood(img, reconstruction)
 
-        kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
+        p, q, z = self.sample(mu, logvar)
+        kld = self.kl_divergence_mc(p, q, z)
 
-        loss = recons_loss + self.hparams.kld_weight * kld_loss
-        result = {"kld_loss": kld_loss,
+        loss = recons_loss + self.hparams.kld_weight * kld
+        result = {"kld_loss": kld,
                   "mse_loss": recons_loss,
                   "loss": loss}
         return result, reconstruction

@@ -67,10 +67,6 @@ class TrainRTGENEVAE(pl.LightningModule):
 
     @staticmethod
     def sample(z_mu, z_var, eps=1e-6):
-        """
-        z_mu and z_var is (batch, dim)
-        """
-        # add eps to prevent 0 variance
         std = torch.exp(z_var / 2.) + eps
 
         p = torch.distributions.Normal(torch.zeros_like(z_mu), torch.ones_like(std))
