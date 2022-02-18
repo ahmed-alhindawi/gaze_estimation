@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
-from gaze_estimation.model import GazeEncoder, ResNet18Dec, ProjectionHeadVAE
+from gaze_estimation.model import resnet18, decoder18, ProjectionHeadVAE
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
 
@@ -28,9 +28,9 @@ class TrainRTGENEAAVAE(pl.LightningModule):
             "right": lambda x: (x[1], x[3])
         }
 
-        self.encoder = GazeEncoder(backend=GazeEncoder.GazeEncoderBackend.Resnet18)  # consider adding more backends
+        self.encoder = resnet18()  # consider adding more backends
         self.projection = ProjectionHeadVAE(output_dim=hparams.latent_dim)
-        self.decoder = ResNet18Dec(z_dim=hparams.latent_dim)
+        self.decoder = decoder18(latent_dim=hparams.latent_dim)
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
@@ -161,13 +161,14 @@ class TrainRTGENEAAVAE(pl.LightningModule):
                 if step < warmup_steps:
                     return float(step) / float(max(1, warmup_steps))
 
-                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                if cosine:
-                    # cosine decay
-                    return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-                # linear decay
-                return 1.0 - progress
+                return 1.0  # do not decay
+                # progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+                # if cosine:
+                #     # cosine decay
+                #     return 0.5 * (1.0 + math.cos(math.pi * progress))
+                #
+                # # linear decay
+                # return 1.0 - progress
 
             return optimiser_schedule_fn
 
@@ -202,15 +203,15 @@ class TrainRTGENEAAVAE(pl.LightningModule):
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
         parser.add_argument('--batch_size', default=128, type=int)
-        parser.add_argument('--learning_rate', type=float, default=1e-1)
+        parser.add_argument('--learning_rate', type=float, default=2.5e-4)
         parser.add_argument('--weight_decay', default=1e-2, type=float)
         parser.add_argument('--optimiser_schedule', action="store_true", default=False)
-        parser.add_argument('--warmup_epochs', type=int, default=5)
+        parser.add_argument('--warmup_epochs', type=int, default=10)
         parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
         parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
         parser.add_argument('--decay_reconstruction_loss', action="store_true", default=False)
         parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
-        parser.add_argument('--kld_weight', type=float, default=0.01)
+        parser.add_argument('--kld_weight', type=float, default=0)
         parser.add_argument('--latent_dim', type=int, default=128)
         parser.set_defaults(cosine_decay=True)
         return parser
@@ -232,7 +233,6 @@ if __name__ == "__main__":
     root_parser.add_argument('--k_fold_validation', action="store_true", dest="k_fold_validation")
     root_parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
     root_parser.add_argument('--seed', type=int, default=0)
-    root_parser.add_argument('--min_epochs', type=int, default=5, help="Number of Epochs to perform at a minimum")
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
     root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
     root_parser.add_argument('--precision', choices=["16", "32"], default="32")

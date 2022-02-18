@@ -1,5 +1,5 @@
 from .GazeVGG import *
 from .GazeResNetMLP import *
-from .GazeResNetDecoder import ResNet18Dec
-from .GazeResNetEncoder import GazeEncoder
+from .GazeResNetDecoder import decoder18, decoder34, decoder50
+from .GazeResNetEncoder import resnet18, resnet34, resnet50
 from .GazeResNetEncoderProjector import ProjectionHeadVAE

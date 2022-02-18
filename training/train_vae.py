@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
-from gaze_estimation.model import GazeEncoder, ResNet18Dec, ProjectionHeadVAE
+from gaze_estimation.model import resnet18, decoder18, ProjectionHeadVAE
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
 
@@ -28,9 +28,9 @@ class TrainRTGENEVAE(pl.LightningModule):
             "right": lambda x: x[3]
         }
 
-        self.encoder = GazeEncoder(backend=GazeEncoder.GazeEncoderBackend.Resnet18)  # consider adding more backends
+        self.encoder = resnet18()  # consider adding more backends
         self.projection = ProjectionHeadVAE(output_dim=hparams.latent_dim)
-        self.decoder = ResNet18Dec(z_dim=hparams.latent_dim)
+        self.decoder = decoder18(latent_dim=hparams.latent_dim)
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
@@ -154,13 +154,15 @@ class TrainRTGENEVAE(pl.LightningModule):
                 if step < warmup_steps:
                     return float(step) / float(max(1, warmup_steps))
 
-                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                if cosine:
-                    # cosine decay
-                    return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-                # linear decay
-                return 1.0 - progress
+                # do not decay
+                return 1.0
+                # progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+                # if cosine:
+                #     # cosine decay
+                #     return 0.5 * (1.0 + math.cos(math.pi * progress))
+                #
+                # # linear decay
+                # return 1.0 - progress
 
             return optimiser_schedule_fn
 
@@ -225,7 +227,6 @@ if __name__ == "__main__":
     root_parser.add_argument('--k_fold_validation', action="store_true", dest="k_fold_validation")
     root_parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
     root_parser.add_argument('--seed', type=int, default=0)
-    root_parser.add_argument('--min_epochs', type=int, default=5, help="Number of Epochs to perform at a minimum")
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
     root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
     root_parser.add_argument('--precision', choices=["16", "32"], default="32")
