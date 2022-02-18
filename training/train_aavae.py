@@ -18,10 +18,10 @@ from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
 
 
-class TrainRTGENEVAE(pl.LightningModule):
+class TrainRTGENEAAVAE(pl.LightningModule):
 
     def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
-        super(TrainRTGENEVAE, self).__init__()
+        super(TrainRTGENEAAVAE, self).__init__()
 
         extract_img_fn = {
             "left": lambda x: x[0],
@@ -89,7 +89,7 @@ class TrainRTGENEVAE(pl.LightningModule):
 
         # kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
         p, q, z = self.sample(mu, logvar)
-        kld = self.kl_divergence_analytic(p, q, z)
+        kld = self.kl_divergence_mc(p, q, z)
 
         loss = self.hparams.kld_weight * kld - recons_loss
         result = {"kld_loss": kld,
@@ -234,7 +234,7 @@ if __name__ == "__main__":
     root_parser.add_argument('--precision', choices=["16", "32"], default="32")
     root_parser.set_defaults(k_fold_validation=True)
 
-    model_parser = TrainRTGENEVAE.add_model_specific_args(root_parser)
+    model_parser = TrainRTGENEAAVAE.add_model_specific_args(root_parser)
     hyperparams = model_parser.parse_args()
     hyperparams.hdf5_file = os.path.abspath(os.path.expanduser(hyperparams.hdf5_file))
     hyperparams.learning_rate = hyperparams.learning_rate * (hyperparams.batch_size/256)
