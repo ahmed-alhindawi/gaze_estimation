@@ -203,7 +203,7 @@ if __name__ == "__main__":
     root_parser.add_argument('--min_epochs', type=int, default=5, help="Number of Epochs to perform at a minimum")
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
     root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
-    root_parser.add_argument('--precision', choices=[16, 32], default=32)
+    root_parser.add_argument('--precision', choices=["16", "32"], default="32")
     root_parser.set_defaults(k_fold_validation=True)
 
     model_parser = TrainRTGENEVAE.add_model_specific_args(root_parser)
@@ -260,7 +260,7 @@ if __name__ == "__main__":
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
                           strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
-                          precision=hyperparams.precision,
+                          precision=int(hyperparams.precision),
                           callbacks=callbacks,
                           min_epochs=hyperparams.min_epochs,
                           log_every_n_steps=10,
