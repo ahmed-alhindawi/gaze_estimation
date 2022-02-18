@@ -106,10 +106,10 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        aug_grid = torchvision.utils.make_grid(aug_imgs, normalize=True, scale_each=True)
+        aug_grid = torchvision.utils.make_grid(aug_imgs[:64], normalize=True, scale_each=True)
         self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
 
-        recon_grid = torchvision.utils.make_grid(recons, normalize=True, scale_each=True)
+        recon_grid = torchvision.utils.make_grid(recons[:64], normalize=True, scale_each=True)
         self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
 
         return result["loss"]
@@ -122,7 +122,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.RandomResizedCrop(size=(64, 64), scale=(0.8, 1.2)),
+                                        transforms.RandomResizedCrop(size=(64, 64), scale=(0.8, 1.2), interpolation=transforms.InterpolationMode.NEAREST),
                                         transforms.RandomGrayscale(p=0.1),
                                         transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
                                         transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),

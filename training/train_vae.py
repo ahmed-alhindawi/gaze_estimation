@@ -24,8 +24,8 @@ class TrainRTGENEVAE(pl.LightningModule):
         super(TrainRTGENEVAE, self).__init__()
 
         extract_img_fn = {
-            "left": lambda x: x[0],
-            "right": lambda x: x[1]
+            "left": lambda x: x[2],
+            "right": lambda x: x[3]
         }
 
         self.encoder = GazeEncoder(backend=GazeEncoder.GazeEncoderBackend.Resnet18)  # consider adding more backends
@@ -86,26 +86,29 @@ class TrainRTGENEVAE(pl.LightningModule):
         result = {"kld_loss": kld,
                   "mse_loss": -recons_loss,
                   "loss": loss}
-        return result, reconstruction
+        return result, reconstruction, img
 
     def training_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, _ = self.shared_step(batch)
         train_result = {"train_" + k: v for k, v in result.items()}
         self.log_dict(train_result)
         return result["loss"]
 
     def validation_step(self, batch, batch_idx):
-        result, recon = self.shared_step(batch)
+        result, recon, aug_img = self.shared_step(batch)
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        grid = torchvision.utils.make_grid(recon[:64], normalize=True)
-        self.logger.experiment.add_image('reconstruction', grid, self.current_epoch)
+        recon_grid = torchvision.utils.make_grid(recon[:64], normalize=True, scale_each=True)
+        self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
+
+        aug_grid = torchvision.utils.make_grid(aug_img[:64], normalize=True, scale_each=True)
+        self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
 
         return result["loss"]
 
     def test_step(self, batch, batch_idx):
-        result, _ = self.shared_step(batch)
+        result, _, _ = self.shared_step(batch)
         test_result = {"test_" + k: v for k, v in result.items()}
         self.log_dict(test_result)
         return result["loss"]

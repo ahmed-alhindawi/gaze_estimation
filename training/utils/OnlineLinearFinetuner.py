@@ -30,7 +30,7 @@ class OnlineFineTuner(Callback):
 
     @staticmethod
     def to_device(batch: Sequence, device: Union[str, torch.device]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        eye_patch, _, head_pose, gaze_pose = batch
+        eye_patch, _, _, _, head_pose, gaze_pose = batch
         eye_patch = eye_patch.to(device)
         head_pose = head_pose.to(device)
         gaze_pose = gaze_pose.to(device)
