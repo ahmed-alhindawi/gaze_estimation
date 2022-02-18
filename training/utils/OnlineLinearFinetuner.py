@@ -25,7 +25,7 @@ class OnlineFineTuner(Callback):
     def on_pretrain_routine_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         # add linear_eval layer and optimizer
         pl_module.online_finetuner = MLPEvaluator(n_input=self.encoder_output_dim).to(pl_module.device)
-        self.optimizer = torch.optim.Adam(pl_module.online_finetuner.parameters(), lr=1e-4, weight_decay=1e-5)
+        self.optimizer = torch.optim.AdamW(pl_module.online_finetuner.parameters(), lr=1e-4)
         self.metrics.to(pl_module.device)
 
     @staticmethod
