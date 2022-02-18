@@ -48,6 +48,14 @@ class TrainRTGENEVAE(pl.LightningModule):
         result = self.encoder(img)
         return result
 
+    @staticmethod
+    def gaussian_likelihood(mean, sample):
+        dist = torch.distributions.Normal(mean, 1.0)
+        log_pxz = dist.log_prob(sample)
+
+        # sum over dimensions
+        return log_pxz.sum(dim=(1, 2, 3))
+
     def shared_step(self, batch):
         orig_img = self._extract_fn(batch)
         augm_img = self._augmentations(orig_img)
@@ -58,13 +66,13 @@ class TrainRTGENEVAE(pl.LightningModule):
         z = eps * std + mu
         reconstruction = self.decoder(z)
 
-        recons_loss = F.mse_loss(orig_img, reconstruction)
+        recons_loss = self.gaussian_likelihood(reconstruction, sample=orig_img).mean()
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
 
-        loss = recons_loss + self.hparams.kld_weight * kld_loss
+        loss = self.hparams.kld_weight * kld_loss - recons_loss
         result = {"kld_loss": kld_loss,
-                  "mse_loss": recons_loss,
+                  "mse_loss": -recons_loss,
                   "loss": loss}
         return result, reconstruction
 
@@ -79,7 +87,6 @@ class TrainRTGENEVAE(pl.LightningModule):
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        grid = torchvision.utils.make_grid(recon[:64])
         grid = torchvision.utils.make_grid(recon[:64])
         self.logger.experiment.add_image('reconstruction', grid, self.current_epoch)
 
@@ -170,7 +177,7 @@ class TrainRTGENEVAE(pl.LightningModule):
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
         parser.add_argument('--batch_size', default=128, type=int)
-        parser.add_argument('--learning_rate', type=float, default=3e-2)
+        parser.add_argument('--learning_rate', type=float, default=1e-1)
         parser.add_argument('--weight_decay', default=1e-2, type=float)
         parser.add_argument('--optimiser_schedule', type=bool, default=False)
         parser.add_argument('--warmup_epochs', type=int, default=5)
@@ -209,6 +216,7 @@ if __name__ == "__main__":
     model_parser = TrainRTGENEVAE.add_model_specific_args(root_parser)
     hyperparams = model_parser.parse_args()
     hyperparams.hdf5_file = os.path.abspath(os.path.expanduser(hyperparams.hdf5_file))
+    hyperparams.learning_rate = hyperparams.learning_rate * (hyperparams.batch_size/256)
     print_args(hyperparams)
 
     pl.seed_everything(hyperparams.seed)

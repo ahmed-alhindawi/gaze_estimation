@@ -41,6 +41,14 @@ class TrainRTGENEVAE(pl.LightningModule):
         result = self.encoder(img)
         return result
 
+    @staticmethod
+    def gaussian_likelihood(mean, sample):
+        dist = torch.distributions.Normal(mean, 1.0)
+        log_pxz = dist.log_prob(sample)
+
+        # sum over dimensions
+        return log_pxz.sum(dim=(1, 2, 3))
+
     def shared_step(self, batch):
         img = self._extract_fn(batch)
         encoding = self.forward(img)
@@ -50,7 +58,7 @@ class TrainRTGENEVAE(pl.LightningModule):
         z = eps * std + mu
         reconstruction = self.decoder(z)
 
-        recons_loss = F.mse_loss(img, reconstruction)
+        recons_loss = self.gaussian_likelihood(img, reconstruction)
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1), dim=0)
 
