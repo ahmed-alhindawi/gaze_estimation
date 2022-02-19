@@ -102,15 +102,15 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         return result["loss"]
 
     def validation_step(self, batch, batch_idx):
-        result, recons, aug_imgs = self.shared_step(batch)
+        result, _, _ = self.shared_step(batch)
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        aug_grid = torchvision.utils.make_grid(aug_imgs[:64], normalize=True, scale_each=True)
-        self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
-
-        recon_grid = torchvision.utils.make_grid(recons[:64], normalize=True, scale_each=True)
-        self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
+        # aug_grid = torchvision.utils.make_grid(aug_imgs[:64], normalize=True, scale_each=True)
+        # self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
+        #
+        # recon_grid = torchvision.utils.make_grid(recons[:64], normalize=True, scale_each=True)
+        # self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
 
         return result["loss"]
 
