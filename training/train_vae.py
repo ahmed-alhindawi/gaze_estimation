@@ -1,21 +1,40 @@
 import itertools
-import math
 import os
 from argparse import ArgumentParser
+from functools import partial
 
 import h5py
 import pytorch_lightning as pl
 import torch
-from torch.nn import functional as F
-import torchvision
+import torchvision.utils
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
-from gaze_estimation.model import resnet18, decoder18, ProjectionHeadVAE
+from gaze_estimation.model import resnet18, resnet34, resnet50, decoder18, decoder34, decoder50, ProjectionHeadVAERegression, LatentRegressor
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
+
+OPTIMISERS = {
+    "adam_w": torch.optim.AdamW,
+    "adam": torch.optim.Adam,
+    "lamb": LAMB,
+    "sgd": torch.optim.SGD
+}
+
+ENCODERS = {
+    "resnet18": (resnet18, 512),
+    "resnet34": (resnet34, 512),
+    "resnet50": (resnet50, 1024)
+}
+
+DECODERS = {
+    "resnet18": decoder18,
+    "resnet34": decoder34,
+    "resnet50": decoder50
+}
 
 
 class TrainRTGENEVAE(pl.LightningModule):
@@ -24,13 +43,16 @@ class TrainRTGENEVAE(pl.LightningModule):
         super(TrainRTGENEVAE, self).__init__()
 
         extract_img_fn = {
-            "left": lambda x: x[2],
-            "right": lambda x: x[3]
+            "left": lambda x: (x[2], x[5]),
+            "right": lambda x: (x[3], x[5]),
         }
 
-        self.encoder = resnet18()  # consider adding more backends
-        self.projection = ProjectionHeadVAE(output_dim=hparams.latent_dim)
+        self.encoder = ENCODERS[hparams.encoder][0]()
+        self.projection = ProjectionHeadVAERegression(input_dim=ENCODERS[hparams.encoder][1], latent_dim=hparams.latent_dim, regressor_dim=2)
+        self.latent_regressor = LatentRegressor(input_dim=2, output_dim=hparams.latent_dim)
         self.decoder = decoder18(latent_dim=hparams.latent_dim)
+        self._normaliser = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                std=[0.229, 0.224, 0.225])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
@@ -50,41 +72,34 @@ class TrainRTGENEVAE(pl.LightningModule):
         return log_pxz.sum(dim=(1, 2, 3))
 
     @staticmethod
-    def kl_divergence_mc(p, q, z):
-        log_pz = p.log_prob(z)
-        log_qz = q.log_prob(z)
-
-        kl = (log_qz - log_pz).sum(dim=-1)
-
-        return kl
-
-    @staticmethod
     def sample(z_mu, z_var, eps=1e-6):
-        std = torch.exp(z_var / 2.) + eps
+        std = torch.exp(0.5 * z_var)
 
-        p = torch.distributions.Normal(torch.zeros_like(z_mu), torch.ones_like(std))
         q = torch.distributions.Normal(z_mu, std)
         z = q.rsample()
 
-        return p, q, z
+        return z
 
     def shared_step(self, batch):
-        img = self._extract_fn(batch)
+        img, gaze = self._extract_fn(batch)
         encoding = self.forward(img)
-        mu, logvar = self.projection(encoding)
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        z = eps * std + mu
+        mu, logvar, mu_r, logvar_r = self.projection(encoding)
+
+        z = self.sample(mu, logvar)
+        r = self.sample(mu_r, logvar_r)
+
         reconstruction = self.decoder(z)
+        recons_loss = self.hparams.recon_weight * self.gaussian_likelihood(img, reconstruction).mean()
 
-        recons_loss = self.gaussian_likelihood(img, reconstruction).mean()
+        latent_r = self.latent_regressor(r)
 
-        p, q, z = self.sample(mu, logvar)
-        kld = self.kl_divergence_mc(p, q, z).mean()
+        kld = self.hparams.kld_weight * (-0.5 * (1 + logvar - (mu - latent_r) ** 2 - logvar.exp()).sum(dim=1)).mean()
+        label_loss = self.hparams.label_weight * (-0.5 * (1 + logvar_r - (mu_r - gaze) ** 2 - logvar_r.exp()).sum(dim=1).mean())
+        loss = label_loss + kld - recons_loss
 
-        loss = self.hparams.kld_weight * kld - recons_loss
         result = {"kld_loss": kld,
-                  "mse_loss": -recons_loss,
+                  "label_loss": label_loss,
+                  "recon_loss": -recons_loss,
                   "loss": loss}
         return result, reconstruction, img
 
@@ -99,11 +114,8 @@ class TrainRTGENEVAE(pl.LightningModule):
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        recon_grid = torchvision.utils.make_grid(recon[:64], normalize=True, scale_each=True)
-        self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
-
-        aug_grid = torchvision.utils.make_grid(aug_img[:64], normalize=True, scale_each=True)
-        self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
+        grid = torchvision.utils.make_grid(recon[:64, :], normalize=True, scale_each=True)
+        self.logger.experiment.add_image("reconstructions", grid, self.current_epoch)
 
         return result["loss"]
 
@@ -115,54 +127,34 @@ class TrainRTGENEVAE(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.RandomResizedCrop(size=(64, 64), scale=(0.5, 1.3)),
+                                        transforms.RandomResizedCrop(size=(32, 32), scale=(0.5, 1.3)),
                                         transforms.RandomGrayscale(p=0.1),
                                         transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
                                         transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
-                                        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                             std=[0.229, 0.224, 0.225])])
+                                        self._normaliser])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._train_subjects, transform=transform)
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=True, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def val_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(64, 64)),
-                                        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                             std=[0.229, 0.224, 0.225])])
+                                        transforms.Resize(size=(32, 32)),
+                                        self._normaliser])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._validate_subjects, transform=transform)
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def test_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(64, 64)),
-                                        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                             std=[0.229, 0.224, 0.225])])
+                                        transforms.Resize(size=(32, 32)),
+                                        self._normaliser])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._test_subjects, transform=transform)
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def configure_optimizers(self):
-        def linear_warmup_decay(warmup_steps, total_steps, cosine=True):
-            """
-            Linear warmup for warmup_steps, optionally with cosine annealing or
-            linear decay to 0 at total_steps
-
-            Adapted from grid_ai/aavae
-            """
-
-            # this sucks
+        def linear_warmup_decay(warmup_steps):
             def optimiser_schedule_fn(step):
                 if step < warmup_steps:
                     return float(step) / float(max(1, warmup_steps))
-
-                # do not decay
                 return 1.0
-                # progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                # if cosine:
-                #     # cosine decay
-                #     return 0.5 * (1.0 + math.cos(math.pi * progress))
-                #
-                # # linear decay
-                # return 1.0 - progress
 
             return optimiser_schedule_fn
 
@@ -171,20 +163,12 @@ class TrainRTGENEVAE(pl.LightningModule):
             if param.requires_grad:
                 params_to_update.append(param)
 
-        if self.hparams.optimiser == "adam_w":
-            optimizer = torch.optim.AdamW(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
-        elif self.hparams.optimiser == "lamb":
-            optimizer = LAMB(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
-        else:
-            raise NotImplementedError("Only 'adam_w' and 'lamb' optimisers have been implemented")
+        optimizer = partial(OPTIMISERS[self.hparams.optimiser], params=params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)()
 
         if self.hparams.optimiser_schedule:
-
             warmup_steps = (81152 / self.hparams.batch_size) * self.hparams.warmup_epochs
-            total_steps = (81152 / self.hparams.batch_size) * self.hparams.max_epochs
-
             scheduler = {
-                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps, total_steps, self.hparams.cosine_decay)),
+                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps)),
                 "interval": "step",
                 "frequency": 1,
             }
@@ -199,15 +183,16 @@ class TrainRTGENEVAE(pl.LightningModule):
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--learning_rate', type=float, default=3e-2)
         parser.add_argument('--weight_decay', default=1e-2, type=float)
+        parser.add_argument('--encoder', choices=ENCODERS.keys(), default=list(ENCODERS.keys())[0])
+        parser.add_argument('--decoder', choices=DECODERS.keys(), default=list(DECODERS.keys())[0])
         parser.add_argument('--optimiser_schedule', action="store_true", default=False)
-        parser.add_argument('--warmup_epochs', type=int, default=5)
-        parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
-        parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
+        parser.add_argument('--warmup_epochs', type=int, default=10)
         parser.add_argument('--decay_reconstruction_loss', action="store_true", default=False)
-        parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
-        parser.add_argument('--kld_weight', type=float, default=1)  # default for vae, increase for beta-vae, decrease for vae
+        parser.add_argument('--optimiser', choices=OPTIMISERS.keys(), default=list(OPTIMISERS.keys())[0])
+        parser.add_argument('--kld_weight', type=float, default=4e-2)
+        parser.add_argument('--label_weight', type=float, default=1.0)
+        parser.add_argument('--recon_weight', type=float, default=1e-3)
         parser.add_argument('--latent_dim', type=int, default=128)
-        parser.set_defaults(cosine_decay=True)
         return parser
 
 
@@ -278,8 +263,8 @@ if __name__ == "__main__":
         model = TrainRTGENEVAE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
 
         # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
-        callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10,
-                                     filename="epoch={epoch}-valid_loss={valid_loss:.2f}", save_last=True),
+        callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10, save_last=True,
+                                     filename=f"fold={fold}" + "{epoch}-{valid_loss:.2f}"),
                      LearningRateMonitor(),
                      OnlineFineTuner(encoder_output_dim=512)]
 
@@ -288,7 +273,6 @@ if __name__ == "__main__":
                           strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
                           precision=int(hyperparams.precision),
                           callbacks=callbacks,
-                          min_epochs=hyperparams.min_epochs,
                           log_every_n_steps=10,
                           max_epochs=hyperparams.max_epochs)
         trainer.fit(model)

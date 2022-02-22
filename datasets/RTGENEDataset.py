@@ -10,17 +10,20 @@ import h5py
 
 class RTGENEH5Dataset(data.Dataset):
 
-    def __init__(self, h5_pth, subject_list=None, transform=None):
+    def __init__(self, h5_pth, subject_list=None, transform=None, base_transform=None):
         self._h5_file = h5_pth
         self._transform = transform
         self._subject_labels = []
 
         assert subject_list is not None, "Must pass a list of subjects to load the data for"
-
         assert self._transform is not None
-        self._base_transform = transforms.Compose([transforms.ToTensor(),
-                                                   transforms.Resize((32, 32), transforms.InterpolationMode.NEAREST),
-                                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
+        self._base_transform = base_transform
+
+        if self._base_transform is None:
+            self._base_transform = transforms.Compose([transforms.ToTensor(),
+                                                       transforms.Resize((32, 32), transforms.InterpolationMode.NEAREST),
+                                                       transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
         wanted_subjects = ["s{:03d}".format(_i) for _i in subject_list]
 

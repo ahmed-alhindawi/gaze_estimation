@@ -2,7 +2,6 @@ from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
 
 from pytorch_lightning import Callback
@@ -20,7 +19,7 @@ class OnlineFineTuner(Callback):
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.encoder_output_dim = encoder_output_dim
         self.metrics = MetricCollection([MeanSquaredError(), GazeAngleAccuracyMetric()])
-        self.loss_fn = torch.nn.SmoothL1Loss(beta=0.1)  # roughly 6 degrees
+        self.loss_fn = torch.nn.L1Loss()
 
     def on_pretrain_routine_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         # add linear_eval layer and optimizer
@@ -91,7 +90,7 @@ def set_training(module: nn.Module, mode: bool):
 
 
 class MLPEvaluator(nn.Module):
-    def __init__(self, n_input: int = 128, n_classes=2, n_hidden=512, p=0.05):
+    def __init__(self, n_input: int = 128, n_classes=2, n_hidden=512):
         super().__init__()
         self.n_input = n_input
         self.n_classes = n_classes
@@ -100,16 +99,10 @@ class MLPEvaluator(nn.Module):
         # use simple MLP classifier
         self.block_forward = nn.Sequential(
             Flatten(),
-            nn.Dropout(p=p),
             nn.Linear(n_input + 2, n_hidden),
             nn.BatchNorm1d(n_hidden),
             nn.GELU(),
-            nn.Dropout(p=p),
-            nn.Linear(n_hidden, n_hidden),
-            nn.BatchNorm1d(n_hidden),
-            nn.GELU(),
-            nn.Dropout(p=p),
-            nn.Linear(n_hidden, n_classes)
+            nn.Linear(n_hidden, n_classes),
         )
 
     def forward(self, latent, headpose):
