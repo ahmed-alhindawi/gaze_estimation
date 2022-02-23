@@ -149,9 +149,7 @@ class TrainRTGENE(pl.LightningModule):
         parser.add_argument('--model_base', choices=MODELS.keys(), default=list(MODELS.keys())[0])
         parser.add_argument('--weight_decay', default=1e-3, type=float)
         parser.add_argument('--optimiser_schedule', action="store_true", default=False)
-        parser.add_argument('--warmup_epochs', type=int, default=5)
-        parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
-        parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
+        parser.add_argument('--warmup_epochs', type=int, default=10)
         parser.add_argument('--optimiser', choices=OPTIMISERS.keys(), default=list(OPTIMISERS.keys())[0])
         return parser
 
@@ -164,8 +162,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.realpath(__file__))
 
     root_parser = ArgumentParser(add_help=False)
-    root_parser.add_argument('--gpu', type=int, default=1,
-                             help='gpu to use, can be repeated for mutiple gpus i.e. --gpu 1 --gpu 2', action="append")
+    root_parser.add_argument('--gpu', type=int, default=-1)
     root_parser.add_argument('--hdf5_file', type=str, default="rtgene_dataset.hdf5")
     root_parser.add_argument('--dataset_type', type=str, choices=["rt_gene", "other"], default="rt_gene")
     root_parser.add_argument('--num_io_workers', default=psutil.cpu_count(logical=False), type=int)
