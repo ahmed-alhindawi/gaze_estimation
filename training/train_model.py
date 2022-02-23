@@ -13,39 +13,45 @@ from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
-from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet, ResNet18Dec
+from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils import GazeAngleAccuracyMetric
+
+LOSS_FN = {
+    "mse": torch.nn.MSELoss,
+    "mae": torch.nn.L1Loss,
+    "smooth-l1": partial(torch.nn.SmoothL1Loss, beta=0.1)  # 0.1 radians is ~6 degrees
+}
+MODELS = {
+    "vgg16": partial(GazeEstimationModelVGG, num_out=2),
+    "resnet18": partial(GazeEstimationModelResNet, num_out=2)
+}
+
+OPTIMISERS = {
+    "adam_w": torch.optim.AdamW,
+    "adam": torch.optim.Adam,
+    "lamb": LAMB
+}
 
 
 class TrainRTGENE(pl.LightningModule):
 
     def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
         super(TrainRTGENE, self).__init__()
-        _loss_fn = {
-            "mse": torch.nn.MSELoss,
-            "mae": torch.nn.L1Loss,
-            "huber": partial(torch.nn.HuberLoss, delta=0.1),  # 0.1 radians is ~6 degrees
-            "smooth-l1": partial(torch.nn.SmoothL1Loss, beta=0.1)  # 0.1 radians is ~6 degrees
-        }
-        _models = {
-            "vgg16": partial(GazeEstimationModelVGG, num_out=2),
-            "resnet18": partial(GazeEstimationModelResNet, num_out=2)
-        }
 
-        self._model = _models.get(hparams.model_base)()
-        self._criterion = _loss_fn.get(hparams.loss_fn)()
+        self.model = MODELS.get(hparams.model_base)()
+        self._criterion = LOSS_FN.get(hparams.loss_fn)()
         self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
-        self.save_hyperparameters(hparams, ignore=["train_subjects", "validate_subjects", "test_subjects"])
+        self.save_hyperparameters(hparams)
 
     def forward(self, left_patch, right_patch, head_pose):
-        return self._model(left_patch, right_patch, head_pose)
+        return self.model(left_patch, right_patch, head_pose)
 
     def shared_step(self, batch):
-        left_patch, right_patch, headpose_label, gaze_labels = batch
+        _, _, left_patch, right_patch, headpose_label, gaze_labels = batch
 
         angle_out, _ = self.forward(left_patch, right_patch, headpose_label)
         metrics = self._metrics(angle_out[:, :2], gaze_labels)
@@ -79,7 +85,7 @@ class TrainRTGENE(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
+                                        transforms.RandomResizedCrop(size=(32, 32), scale=(0.5, 1.3)),
                                         transforms.RandomGrayscale(p=0.1),
                                         transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
                                         transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
@@ -90,7 +96,7 @@ class TrainRTGENE(pl.LightningModule):
 
     def val_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(36, 60)),
+                                        transforms.Resize(size=(32, 32)),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._validate_subjects, transform=transform)
@@ -98,55 +104,34 @@ class TrainRTGENE(pl.LightningModule):
 
     def test_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(36, 60)),
+                                        transforms.Resize(size=(32, 32)),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
         _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._test_subjects, transform=transform)
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def configure_optimizers(self):
-        def linear_warmup_decay(warmup_steps, total_steps, cosine=True):
-            """
-            Linear warmup for warmup_steps, optionally with cosine annealing or
-            linear decay to 0 at total_steps
-
-            Adapted from grid_ai/aavae
-            """
-
+        def linear_warmup_decay(warmup_steps):
             def fn(step):
                 if step < warmup_steps:
                     return float(step) / float(max(1, warmup_steps))
 
-                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                if cosine:
-                    # cosine decay
-                    return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-                # linear decay
-                return 1.0 - progress
+                return 1.0
 
             return fn
 
         params_to_update = []
-        for name, param in self._model.named_parameters():
+        for name, param in self.model.named_parameters():
             if param.requires_grad:
                 params_to_update.append(param)
 
-        if self.hparams.optimiser == "adam_w":
-            optimizer = torch.optim.AdamW(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
-        elif self.hparams.optimiser == "lamb":
-            optimizer = LAMB(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
-        else:
-            raise NotImplementedError("Only 'adam_w' and 'lamb' optimisers have been implemented")
+        optimizer = OPTIMISERS.get(self.hparams.optimiser)(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
 
         if self.hparams.optimiser_schedule:
-
             warmup_steps = (81152 / self.hparams.batch_size) * self.hparams.warmup_epochs
-            total_steps = (81152 / self.hparams.batch_size) * self.hparams.max_epochs
 
             scheduler = {
-                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer,
-                                                               linear_warmup_decay(warmup_steps, total_steps, self.hparams.cosine_decay)),
+                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps)),
                 "interval": "step",
                 "frequency": 1,
             }
@@ -158,18 +143,16 @@ class TrainRTGENE(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
-        parser.add_argument('--loss_fn', choices=["mse", "mae", "huber", "smooth-l1"], default="mse")
+        parser.add_argument('--loss_fn', choices=LOSS_FN.keys(), default=list(LOSS_FN.keys())[0])
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--learning_rate', type=float, default=3e-2)
-        parser.add_argument('--model_base', choices=["vgg16", "resnet18"], default="resnet18")
+        parser.add_argument('--model_base', choices=MODELS.keys(), default=list(MODELS.keys())[0])
         parser.add_argument('--weight_decay', default=1e-3, type=float)
-        parser.add_argument('--optimiser_schedule', type=bool, default=False)
+        parser.add_argument('--optimiser_schedule', action="store_true", default=False)
         parser.add_argument('--warmup_epochs', type=int, default=5)
         parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
         parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
-        parser.add_argument('--decay_reconstruction_loss', type=bool, default=True)
-        parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
-        parser.set_defaults(cosine_decay=True)
+        parser.add_argument('--optimiser', choices=OPTIMISERS.keys(), default=list(OPTIMISERS.keys())[0])
         return parser
 
 
@@ -189,7 +172,8 @@ if __name__ == "__main__":
     root_parser.add_argument('--k_fold_validation', action="store_true", dest="k_fold_validation")
     root_parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
     root_parser.add_argument('--seed', type=int, default=0)
-    root_parser.add_argument('--min_epochs', type=int, default=5, help="Number of Epochs to perform at a minimum")
+    root_parser.add_argument('--precision', type=int, default=16, choices=[16, 32])
+    root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
     root_parser.set_defaults(k_fold_validation=True)
 
@@ -206,16 +190,16 @@ if __name__ == "__main__":
     if hyperparams.dataset_type == "rt_gene":
         if hyperparams.k_fold_validation:
             train_subs.append([1, 2, 8, 10, 3, 4, 7, 9])
-            train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13])
-            train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13])
+            # train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13])
+            # train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13])
             # validation set is always subjects 14, 15 and 16
             valid_subs.append([0, 14, 15, 16])
-            valid_subs.append([0, 14, 15, 16])
-            valid_subs.append([0, 14, 15, 16])
+            # valid_subs.append([0, 14, 15, 16])
+            # valid_subs.append([0, 14, 15, 16])
             # test subjects
             test_subs.append([5, 6, 11, 12, 13])
-            test_subs.append([3, 4, 7, 9])
-            test_subs.append([1, 2, 8, 10])
+            # test_subs.append([3, 4, 7, 9])
+            # test_subs.append([1, 2, 8, 10])
         else:
             train_subs.append([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
             valid_subs.append([0])  # Note that this is a hack and should not be used to get results for papers
@@ -239,15 +223,15 @@ if __name__ == "__main__":
         model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
 
         # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
-        checkpoint_callback = ModelCheckpoint(monitor='valid_GazeAngleAccuracyMetric', mode='min', verbose=False, save_top_k=10,
-                                              filename="epoch={epoch}-valid_loss={valid_loss:.2f}-valid_angle_acc={valid_GazeAngleAccuracyMetric:.2f}")
+        checkpoint_callback = ModelCheckpoint(monitor='valid_GazeAngleAccuracyMetric', mode='min', verbose=False, save_top_k=10, save_last=True,
+                                              filename="{epoch}-{valid_loss:.2f}-{valid_GazeAngleAccuracyMetric:.2f}")
         learning_rate_callback = LearningRateMonitor()
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
-                          precision=32,
+                          precision=int(hyperparams.precision),
                           callbacks=[checkpoint_callback, learning_rate_callback],
-                          min_epochs=hyperparams.min_epochs,
+                          strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
                           log_every_n_steps=10,
                           max_epochs=hyperparams.max_epochs)
         trainer.fit(model)
