@@ -190,16 +190,16 @@ if __name__ == "__main__":
     if hyperparams.dataset_type == "rt_gene":
         if hyperparams.k_fold_validation:
             train_subs.append([1, 2, 8, 10, 3, 4, 7, 9])
-            # train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13])
-            # train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13])
+            train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13])
+            train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13])
             # validation set is always subjects 14, 15 and 16
             valid_subs.append([0, 14, 15, 16])
-            # valid_subs.append([0, 14, 15, 16])
-            # valid_subs.append([0, 14, 15, 16])
+            valid_subs.append([0, 14, 15, 16])
+            valid_subs.append([0, 14, 15, 16])
             # test subjects
             test_subs.append([5, 6, 11, 12, 13])
-            # test_subs.append([3, 4, 7, 9])
-            # test_subs.append([1, 2, 8, 10])
+            test_subs.append([3, 4, 7, 9])
+            test_subs.append([1, 2, 8, 10])
         else:
             train_subs.append([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
             valid_subs.append([0])  # Note that this is a hack and should not be used to get results for papers
