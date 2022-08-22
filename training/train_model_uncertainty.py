@@ -16,14 +16,9 @@ from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelRes
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils import GazeAngleAccuracyMetric
 
-LOSS_FN = {
-    "mse": torch.nn.MSELoss,
-    "mae": torch.nn.L1Loss,
-    "smooth-l1": partial(torch.nn.SmoothL1Loss, beta=0.1)  # 0.1 radians is ~6 degrees
-}
 MODELS = {
-    "vgg16": partial(GazeEstimationModelVGG, num_out=2),
-    "resnet18": partial(GazeEstimationModelResNet, num_out=2)
+    "vgg16": partial(GazeEstimationModelVGG, num_out=3),
+    "resnet18": partial(GazeEstimationModelResNet, num_out=3)
 }
 
 OPTIMISERS = {
@@ -37,9 +32,10 @@ class TrainRTGENE(pl.LightningModule):
 
     def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
         super(TrainRTGENE, self).__init__()
+        self._criterion = torch.nn.GaussianNLLLoss(full=False)
 
         self.model = MODELS.get(hparams.model_base)()
-        self._criterion = LOSS_FN.get(hparams.loss_fn)()
+
         self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
@@ -52,11 +48,13 @@ class TrainRTGENE(pl.LightningModule):
     def shared_step(self, batch):
         _, _, _, left_patch, right_patch, _, headpose_label, gaze_labels = batch
 
-        angle_out, _ = self.forward(left_patch, right_patch, headpose_label)
-        metrics = self._metrics(angle_out[:, :2], gaze_labels)
-
-        loss = self._criterion(angle_out, gaze_labels)
+        y, _ = self.forward(left_patch, right_patch, headpose_label)
+        angle_out = y[:, :2]
+        var_out = torch.exp(y[:, 2])
+        loss = self._criterion(angle_out, gaze_labels, var=var_out)
+        metrics = self._metrics(angle_out, gaze_labels)
         metrics["loss"] = loss
+        metrics["variance"] = torch.mean(var_out)
 
         return metrics, angle_out
 
@@ -175,7 +173,6 @@ class TrainRTGENE(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser])
-        parser.add_argument('--loss_fn', choices=LOSS_FN.keys(), default=list(LOSS_FN.keys())[0])
         parser.add_argument('--batch_size', default=128, type=int)
         parser.add_argument('--learning_rate', type=float, default=3e-2)
         parser.add_argument('--model_base', choices=MODELS.keys(), default=list(MODELS.keys())[0])
