@@ -32,10 +32,8 @@ class TrainRTGENE(pl.LightningModule):
 
     def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
         super(TrainRTGENE, self).__init__()
-        self._criterion = torch.nn.GaussianNLLLoss(full=False)
 
         self.model = MODELS.get(hparams.model_base)()
-
         self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
@@ -50,11 +48,10 @@ class TrainRTGENE(pl.LightningModule):
 
         y, _ = self.forward(left_patch, right_patch, headpose_label)
         angle_out = y[:, :2]
-        var_out = torch.exp(y[:, 2])
-        loss = self._criterion(angle_out, gaze_labels, var=var_out)
+        var_out = y[:, 2].unsqueeze(-1)  # homoscedastic case
+        loss = torch.mean(0.5 * torch.exp(-var_out) * (angle_out - gaze_labels) ** 2 + 0.5 * var_out)
         metrics = self._metrics(angle_out, gaze_labels)
         metrics["loss"] = loss
-        metrics["variance"] = torch.mean(var_out)
 
         return metrics, angle_out
 
@@ -84,7 +81,7 @@ class TrainRTGENE(pl.LightningModule):
         eye_transform = transforms.Compose([transforms.ToTensor(),
                                             transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
                                             transforms.RandomGrayscale(p=0.1),
-                                            transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                            transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                             transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                  std=[0.229, 0.224, 0.225])])
@@ -92,7 +89,7 @@ class TrainRTGENE(pl.LightningModule):
         face_transform = transforms.Compose([transforms.ToTensor(),
                                              transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
                                              transforms.RandomGrayscale(p=0.1),
-                                             transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                             transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                              transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                              transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                   std=[0.229, 0.224, 0.225])])
@@ -104,7 +101,7 @@ class TrainRTGENE(pl.LightningModule):
         eye_transform = transforms.Compose([transforms.ToTensor(),
                                             transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
                                             transforms.RandomGrayscale(p=0.1),
-                                            transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                            transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                             transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                  std=[0.229, 0.224, 0.225])])
@@ -112,7 +109,7 @@ class TrainRTGENE(pl.LightningModule):
         face_transform = transforms.Compose([transforms.ToTensor(),
                                              transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
                                              transforms.RandomGrayscale(p=0.1),
-                                             transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                             transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                              transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                              transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                   std=[0.229, 0.224, 0.225])])
@@ -124,7 +121,7 @@ class TrainRTGENE(pl.LightningModule):
         eye_transform = transforms.Compose([transforms.ToTensor(),
                                             transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
                                             transforms.RandomGrayscale(p=0.1),
-                                            transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                            transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                             transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                  std=[0.229, 0.224, 0.225])])
@@ -132,7 +129,7 @@ class TrainRTGENE(pl.LightningModule):
         face_transform = transforms.Compose([transforms.ToTensor(),
                                              transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
                                              transforms.RandomGrayscale(p=0.1),
-                                             transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                             transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                              transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                              transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                   std=[0.229, 0.224, 0.225])])

@@ -59,7 +59,7 @@ class RTGENEFileDataset(data.Dataset):
         transformed_left = self._eye_transform(left_img)
         transformed_right = self._eye_transform(right_img)
         transformed_face = self._face_transform(face_img)
-
-        return np.array(left_img), np.array(right_img), np.array(face_img), \
+        #
+        return np.asarray(left_img), np.asarray(right_img), np.asarray(face_img), \
                transformed_left, transformed_right, transformed_face, \
                np.array(ground_truth_headpose, dtype=np.float32), np.array(ground_truth_gaze, dtype=np.float32)
