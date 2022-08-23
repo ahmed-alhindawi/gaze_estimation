@@ -16,19 +16,28 @@ from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelRes
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils import GazeAngleAccuracyMetric
 
+class GNLL(torch.nn.Module):
+    def __init__(self):
+        super(GNLL, self).__init__()
+
+    def forward(self, angle_out, label, var):
+        loss = 0.5 * (torch.mul(torch.exp(-var), (angle_out - label) ** 2) + var)
+        return loss.mean()
+
+
 LOSS_FN = {
-    "mse": torch.nn.MSELoss,
-    "mae": torch.nn.L1Loss,
-    "smooth-l1": partial(torch.nn.SmoothL1Loss, beta=0.1)  # 0.1 radians is ~6 degrees
+    "mse": {"loss": torch.nn.MSELoss, "num_out": 2},
+    "mae": {"loss": torch.nn.L1Loss, "num_out": 2},
+    "smooth-l1": {"loss": partial(torch.nn.SmoothL1Loss, beta=0.1), "num_out": 2},  # 0.1 radians is ~6 degrees
+    "gnll": {"loss": GNLL, "num_out": 3}
 }
 MODELS = {
-    "vgg16": partial(GazeEstimationModelVGG, num_out=2),
-    "resnet18": partial(GazeEstimationModelResNet, num_out=2)
+    "vgg16": GazeEstimationModelVGG,
+    "resnet18": GazeEstimationModelResNet
 }
 
 OPTIMISERS = {
     "adam_w": torch.optim.AdamW,
-    "adam": torch.optim.Adam,
     "lamb": LAMB
 }
 
@@ -38,8 +47,8 @@ class TrainRTGENE(pl.LightningModule):
     def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
         super(TrainRTGENE, self).__init__()
 
-        self.model = MODELS.get(hparams.model_base)()
-        self._criterion = LOSS_FN.get(hparams.loss_fn)()
+        self.model = MODELS[hparams.model_base](num_out=LOSS_FN[hparams.loss_fn]["num_out"])
+        self._criterion = LOSS_FN[hparams.loss_fn]["loss"]()
         self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
         self._train_subjects = train_subjects
         self._validate_subjects = validate_subjects
@@ -52,10 +61,16 @@ class TrainRTGENE(pl.LightningModule):
     def shared_step(self, batch):
         _, _, _, left_patch, right_patch, _, headpose_label, gaze_labels = batch
 
-        angle_out, _ = self.forward(left_patch, right_patch, headpose_label)
+        y, _ = self.forward(left_patch, right_patch, headpose_label)
+        angle_out = y[:, :2]
         metrics = self._metrics(angle_out[:, :2], gaze_labels)
 
-        loss = self._criterion(angle_out, gaze_labels)
+        if self.hparams.loss_fn == "gnll":
+            var_out = y[:, 2].unsqueeze(-1).exp()  # homoscedastic
+            loss = self._criterion(angle_out, gaze_labels, var_out)
+        else:
+            loss = self._criterion(angle_out, gaze_labels)
+
         metrics["loss"] = loss
 
         return metrics, angle_out
