@@ -109,7 +109,6 @@ class TrainRTGENE(pl.LightningModule):
                                                                  std=[0.229, 0.224, 0.225])])
 
         data = self._dataset(subject_list=self._train_subjects, eye_transform=eye_transform)
-        print(len(data))
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=True, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def val_dataloader(self):
@@ -200,27 +199,27 @@ if __name__ == "__main__":
 
     root_dir = os.path.dirname(os.path.realpath(__file__))
 
-    root_parser = ArgumentParser(add_help=False)
-    root_parser.add_argument('--gpu', type=int, default=-1)
-    root_parser.add_argument('--dataset_type', nargs='?', choices=('hdf5', 'folder'))
-    root_parser.add_argument('--dataset_path', type=str, required=True)
-    root_parser.add_argument('--dataset_name', type=str, choices=["rt_gene", "other"], default="rt_gene")
-    root_parser.add_argument('--num_io_workers', default=psutil.cpu_count(logical=False), type=int)
-    root_parser.add_argument('--k_fold_validation', action="store_true", dest="k_fold_validation")
-    root_parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
-    root_parser.add_argument('--seed', type=int, default=0)
-    root_parser.add_argument('--precision', type=int, default=32, choices=[16, 32])
-    root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"],
-                             default="ddp_find_unused_parameters_false")
-    root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
-    root_parser.add_argument('--stocastic_weighted_averaging', action="store_true", dest="stochastic_weight_averaging", default="False")
-    root_parser.add_argument('--swa_epochs', type=int, default=10)
-    root_parser.add_argument('--swa_lr', type=float, default=1e-4)
-    root_parser.add_argument('--swa_epoch_start', type=float, default=0.8)
+    parser = ArgumentParser(add_help=False)
+    parser.add_argument('--gpu', type=int, default=-1)
+    parser.add_argument('--dataset_type', nargs='?', choices=('hdf5', 'folder'))
+    parser.add_argument('--dataset_path', type=str, required=True)
+    parser.add_argument('--dataset_name', type=str, choices=["rt_gene", "other"], default="rt_gene")
+    parser.add_argument('--num_io_workers', default=psutil.cpu_count(logical=False), type=int)
+    parser.add_argument('--k_fold_validation', action="store_true", dest="k_fold_validation")
+    parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--precision', type=int, default=32, choices=[16, 32])
+    parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"],
+                        default="ddp_find_unused_parameters_false")
+    parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
+    parser.add_argument('--stocastic_weighted_averaging', action="store_true", dest="stochastic_weight_averaging", default="False")
+    parser.add_argument('--swa_epochs', type=int, default=10)
+    parser.add_argument('--swa_lr', type=float, default=1e-4)
+    parser.add_argument('--swa_epoch_start', type=float, default=0.8)
 
-    root_parser.set_defaults(k_fold_validation=True)
+    parser.set_defaults(k_fold_validation=True)
 
-    model_parser = TrainRTGENE.add_model_specific_args(root_parser)
+    model_parser = TrainRTGENE.add_model_specific_args(parser)
     hyperparams = model_parser.parse_args()
     hyperparams.dataset_path = os.path.abspath(os.path.expanduser(hyperparams.dataset_path))
     print_args(hyperparams)
@@ -235,9 +234,11 @@ if __name__ == "__main__":
             train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13, 14, 15, 16])
             train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
             train_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
+
             valid_subs.append([1, 2, 8, 10])
             valid_subs.append([3, 4, 7, 9])
             valid_subs.append([5, 6, 11, 12, 13])
+
             test_subs.append([0])
             test_subs.append([0])
             test_subs.append([0])
