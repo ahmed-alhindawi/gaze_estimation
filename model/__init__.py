@@ -6,3 +6,5 @@ from .GazeResNetEncoderProjector import *
 from .LatentRegressor import *
 from .GazeEncoderFullModel import *
 from .GazeContextModelVGG import *
+from .GazeConvNextMLP import GazeEstimationModelConvNeXt
+from .GazeEstimationWideResNet import GazeEstimationWideResNet

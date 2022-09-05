@@ -14,24 +14,24 @@ class GazeEstimationAbstractModel(nn.Module):
         x_l = nn.Sequential(
             nn.Linear(in_features, 1024),
             nn.BatchNorm1d(1024),
-            nn.ReLU()
+            nn.GELU()
         )
         x_r = nn.Sequential(
             nn.Linear(in_features, 1024),
             nn.BatchNorm1d(1024),
-            nn.ReLU()
+            nn.GELU()
         )
 
         concat = nn.Sequential(
             nn.Linear(2048, 512),
             nn.BatchNorm1d(512),
-            nn.ReLU()
+            nn.GELU()
 
         )
 
         fc1 = nn.Sequential(
             nn.Linear(514, 256),
-            nn.ReLU()
+            nn.GELU()
         )
 
         fc2 = nn.Sequential(

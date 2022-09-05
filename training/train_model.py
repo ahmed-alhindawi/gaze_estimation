@@ -12,18 +12,9 @@ from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEFileDataset, RTGENEH5Dataset
-from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet
+from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet, GazeEstimationModelConvNeXt, GazeEstimationWideResNet
 from gaze_estimation.training.LAMB import LAMB
-from gaze_estimation.training.utils import GazeAngleAccuracyMetric
-
-
-class GNLL(torch.nn.Module):
-    def __init__(self):
-        super(GNLL, self).__init__()
-
-    def forward(self, angle_out, label, var):
-        loss = 0.5 * ((torch.exp(-var) * (angle_out - label) ** 2) + var)
-        return loss.mean()
+from gaze_estimation.training.utils import GazeAngleAccuracyMetric, GNLL
 
 
 LOSS_FN = {
@@ -34,7 +25,9 @@ LOSS_FN = {
 }
 MODELS = {
     "vgg16": GazeEstimationModelVGG,
-    "resnet18": GazeEstimationModelResNet
+    "resnet18": GazeEstimationModelResNet,
+    "convnext_tiny": GazeEstimationModelConvNeXt,
+    "wideresnet50_2": GazeEstimationWideResNet
 }
 
 OPTIMISERS = {
@@ -108,31 +101,22 @@ class TrainRTGENE(pl.LightningModule):
                                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                  std=[0.229, 0.224, 0.225])])
 
-        data = self._dataset(subject_list=self._train_subjects, eye_transform=eye_transform)
+        data = self._dataset(subject_list=self._train_subjects, eye_transform=eye_transform, data_fraction=0.95, data_type="training")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=True, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def val_dataloader(self):
-        data = self._dataset(subject_list=self._validate_subjects, eye_transform=None)
+        data = self._dataset(subject_list=self._validate_subjects, eye_transform=None, data_fraction=0.05, data_type="validation")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def test_dataloader(self):
-        data = self._dataset(subject_list=self._test_subjects, eye_transform=None)
+        data = self._dataset(subject_list=self._test_subjects, eye_transform=None, data_fraction=0.05, data_type="testing")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def configure_optimizers(self):
-        # def linear_warmup_decay(warmup_steps):
-        #     def fn(step):
-        #         if step < warmup_steps:
-        #             return float(step) / float(max(1, warmup_steps))
-        #
-        #         return 1.0
-        #
-        #     return fn
-
         def linear_warmup_decay(warmup_steps, total_steps, cosine=True, linear=False):
             """
-            Linear warmup for warmup_steps, optionally with cosine annealing or
-            linear decay to 0 at total_steps
+            Linear warmup for warmup_steps, optionally with cosine annealing or linear decay to 0 at total_steps
+            From grid-ai labs/AAVAE paper
             """
             # check if both decays are not True at the same time
             assert not (linear and cosine)
@@ -212,11 +196,6 @@ if __name__ == "__main__":
     parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"],
                         default="ddp_find_unused_parameters_false")
     parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
-    parser.add_argument('--stocastic_weighted_averaging', action="store_true", dest="stochastic_weight_averaging", default="False")
-    parser.add_argument('--swa_epochs', type=int, default=10)
-    parser.add_argument('--swa_lr', type=float, default=1e-4)
-    parser.add_argument('--swa_epoch_start', type=float, default=0.8)
-
     parser.set_defaults(k_fold_validation=True)
 
     model_parser = TrainRTGENE.add_model_specific_args(parser)
@@ -235,9 +214,9 @@ if __name__ == "__main__":
             train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
             train_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
 
-            valid_subs.append([1, 2, 8, 10])
-            valid_subs.append([3, 4, 7, 9])
-            valid_subs.append([5, 6, 11, 12, 13])
+            valid_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13, 14, 15, 16])
+            valid_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
+            valid_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
 
             test_subs.append([0])
             test_subs.append([0])
@@ -270,15 +249,11 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Dataset type {hyperparams.dataset_path} not suitable")
 
+        hyperparams.fold_idx = fold
         model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s, dataset=dataset_partial)
 
-        # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10, save_last=True,
                                      filename="{epoch}-{valid_loss:.2f}-{valid_GazeAngleAccuracyMetric:.2f}"), LearningRateMonitor()]
-
-        if hyperparams.stochastic_weight_averaging:
-            swa = StochasticWeightAveraging(swa_epoch_start=0.8, swa_lrs=hyperparams.swa_lr, annealing_epochs=hyperparams.swa_epochs)
-            callbacks.append(swa)
 
         # start training
         trainer = Trainer(gpus=hyperparams.gpu,
@@ -288,4 +263,4 @@ if __name__ == "__main__":
                           log_every_n_steps=10,
                           max_epochs=hyperparams.max_epochs)
         trainer.fit(model)
-        trainer.test(ckpt_path="best")
+        trainer.test()

@@ -1,5 +1,6 @@
 import os
 
+import math
 import numpy as np
 from torch.utils import data
 from torchvision import transforms
@@ -10,23 +11,34 @@ import h5py
 
 class RTGENEFileDataset(data.Dataset):
 
-    def __init__(self, root_path, subject_list=None, eye_transform=None):
+    def __init__(self, root_path, data_fraction: float, subject_list=None, data_type="training", eye_transform=None):
         self._root_path = root_path
         self._eye_transform = eye_transform
         self._subject_labels = []
 
         assert subject_list is not None, "Must pass a list of subjects to load the data for"
+        assert data_type in ["training", "validation", "testing"]
+        assert 0 < data_fraction <= 1
 
         if self._eye_transform is None:
             self._eye_transform = transforms.Compose([transforms.Resize((36, 60), transforms.InterpolationMode.NEAREST),
                                                       transforms.ToTensor(),
                                                       transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
+        self._orig_transform = transforms.Compose([transforms.ToTensor(),
+                                                   transforms.Resize((32, 32)),
+                                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
         subject_path = [os.path.join(root_path, "s{:03d}_glasses/".format(_i)) for _i in subject_list]
 
         for subject_data in tqdm(subject_path, "Loading Subject metadata"):
             with open(os.path.join(subject_data, "label_combined.txt"), "r") as f:
                 _lines = f.readlines()
+                if data_type == "training" or data_type == "testing":
+                    _lines = _lines[:math.floor(len(_lines) * data_fraction)]
+                elif data_type == "validation":
+                    _lines = _lines[-math.floor(len(_lines) * data_fraction):]
+
                 for line in _lines:
                     split = line.split(",")
                     left_img_path = os.path.join(subject_data, "inpainted/left/", "left_{:0=6d}_rgb.png".format(int(split[0])))
@@ -44,8 +56,8 @@ class RTGENEFileDataset(data.Dataset):
 
     def __getitem__(self, index):
         sample = self._subject_labels[index]
-        ground_truth_headpose = [sample[3], sample[4]]
-        ground_truth_gaze = [sample[5], sample[6]]
+        ground_truth_headpose = np.array([sample[3], sample[4]], dtype=np.float32)
+        ground_truth_gaze = np.array([sample[5], sample[6]], dtype=np.float32)
 
         left_img = Image.open(os.path.join(self._root_path, sample[0])).convert('RGB')
         right_img = Image.open(os.path.join(self._root_path, sample[1])).convert('RGB')
@@ -53,36 +65,44 @@ class RTGENEFileDataset(data.Dataset):
         transformed_left = self._eye_transform(left_img)
         transformed_right = self._eye_transform(right_img)
 
-        return np.asarray(left_img), np.asarray(right_img), transformed_left, transformed_right, np.array(ground_truth_headpose,
-                                                                                                          dtype=np.float32), np.array(
-            ground_truth_gaze, dtype=np.float32)
+        return self._orig_transform(left_img), self._orig_transform(right_img), transformed_left, transformed_right, ground_truth_headpose, ground_truth_gaze
 
 
 class RTGENEH5Dataset(data.Dataset):
 
-    def __init__(self, root_path, subject_list=None, eye_transform=None):
+    def __init__(self, root_path, data_fraction: float, subject_list=None, data_type="training", eye_transform=None):
         self._h5_file = root_path
         self._transform = eye_transform
         self._subject_labels = []
 
         assert subject_list is not None, "Must pass a list of subjects to load the data for"
+        assert data_type in ["training", "validation", "testing"]
+        assert 0 < data_fraction <= 1
 
         if self._transform is None:
             self._transform = transforms.Compose([transforms.Resize((36, 60)),
                                                   transforms.ToTensor(),
                                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
+        self._orig_transform = transforms.Compose([transforms.ToTensor(),
+                                                   transforms.Resize((32, 32)),
+                                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
         wanted_subjects = ["s{:03d}".format(_i) for _i in subject_list]
 
         with h5py.File(self._h5_file, mode="r") as dataset:
-            for grp_s_n in tqdm(wanted_subjects, desc="Loading subject metadata..."):  # subjects
-                for grp_i_n, grp_i in dataset[grp_s_n].items():  # images
-                    if "left" in grp_i.keys() and "right" in grp_i.keys() and "label" in grp_i.keys():
-                        left_dataset = grp_i["left"]
-                        right_datset = grp_i['right']
+            for subject_ids in tqdm(wanted_subjects, desc="Loading subject metadata..."):  # subjects
+                images = list(dataset[subject_ids].items())
+                if data_type == "training" or data_type == "testing":
+                    images = images[:math.floor(len(images) * data_fraction)]
+                elif data_type == "validation":
+                    images = images[-math.floor(len(images) * data_fraction):]
 
-                        assert len(left_dataset) == len(right_datset), "Dataset left/right images aren't equal length"
-                        self._subject_labels.append("/" + grp_s_n + "/" + grp_i_n)
+                for _, subject_img_grp in images:
+                    if "left" in subject_img_grp.keys() and "right" in subject_img_grp.keys() and "label" in subject_img_grp.keys():
+                        self._subject_labels.append(subject_img_grp.name)
+
+        assert len(self._subject_labels) > 0
 
     def __len__(self):
         return len(self._subject_labels)
@@ -102,4 +122,10 @@ class RTGENEH5Dataset(data.Dataset):
         transformed_left = self._transform(Image.fromarray(left_img, 'RGB'))
         transformed_right = self._transform(Image.fromarray(right_img, 'RGB'))
 
-        return left_img, right_img, transformed_left, transformed_right, ground_truth_headpose, ground_truth_gaze
+        return self._orig_transform(left_img), self._orig_transform(right_img), transformed_left, transformed_right, ground_truth_headpose, ground_truth_gaze
+
+
+if __name__ == "__main__":
+    _dataset = RTGENEH5Dataset(root_path="/home/ahmed/datasets/rtgene_dataset.hdf5", subject_list=[0], eye_transform=None, data_type="training", data_fraction=0.95)
+    for i in range(len(_dataset)):
+        _ = _dataset[i]

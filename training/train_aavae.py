@@ -1,18 +1,16 @@
 import itertools
-import math
 import os
 from argparse import ArgumentParser
 
 import h5py
 import pytorch_lightning as pl
 import torch
-from torch.nn import functional as F
 import torchvision
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 
-from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset
+from gaze_estimation.datasets.RTGENEDataset import RTGENEH5Dataset, RTGENEFileDataset
 from gaze_estimation.model import resnet18, decoder18, ProjectionHeadVAE
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
@@ -20,7 +18,7 @@ from gaze_estimation.training.utils.OnlineLinearFinetuner import OnlineFineTuner
 
 class TrainRTGENEAAVAE(pl.LightningModule):
 
-    def __init__(self, hparams, train_subjects, validate_subjects, test_subjects):
+    def __init__(self, hparams, train_subjects, validate_subjects, test_subjects, dataset):
         super(TrainRTGENEAAVAE, self).__init__()
 
         extract_img_fn = {
@@ -35,7 +33,8 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         self._validate_subjects = validate_subjects
         self._test_subjects = test_subjects
         self._extract_fn = extract_img_fn[hparams.eye_laterality]
-        self.save_hyperparameters(hparams, ignore=["train_subjects", "validate_subjects", "test_subjects"])
+        self._dataset_fn = dataset
+        self.save_hyperparameters(hparams)
 
     def forward(self, img):
         result = self.encoder(img)
@@ -102,15 +101,15 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         return result["loss"]
 
     def validation_step(self, batch, batch_idx):
-        result, _, _ = self.shared_step(batch)
+        result, recons, aug_imgs = self.shared_step(batch)
         valid_result = {"valid_" + k: v for k, v in result.items()}
         self.log_dict(valid_result)
 
-        # aug_grid = torchvision.utils.make_grid(aug_imgs[:64], normalize=True, scale_each=True)
-        # self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
-        #
-        # recon_grid = torchvision.utils.make_grid(recons[:64], normalize=True, scale_each=True)
-        # self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
+        aug_grid = torchvision.utils.make_grid(aug_imgs[:8], normalize=True, scale_each=True)
+        self.logger.experiment.add_image('aug_imgs', aug_grid, self.current_epoch)
+
+        recon_grid = torchvision.utils.make_grid(recons[:8], normalize=True, scale_each=True)
+        self.logger.experiment.add_image('reconstruction', recon_grid, self.current_epoch)
 
         return result["loss"]
 
@@ -122,21 +121,24 @@ class TrainRTGENEAAVAE(pl.LightningModule):
 
     def train_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.RandomResizedCrop(size=(32, 32), scale=(0.8, 1.2), interpolation=transforms.InterpolationMode.NEAREST),
+                                        transforms.RandomResizedCrop(size=(32, 32), scale=(0.5, 1.2), interpolation=transforms.InterpolationMode.BILINEAR),
                                         transforms.RandomGrayscale(p=0.1),
-                                        transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                        transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
                                         transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
-        _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._train_subjects, transform=transform)
+        _data = self._dataset_fn(root_path=self.hparams.dataset, subject_list=self._train_subjects, eye_transform=transform, data_fraction=0.95, data_type="training")
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=True, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def val_dataloader(self):
         transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(size=(32, 32)),
+                                        transforms.RandomResizedCrop(size=(32, 32), scale=(0.5, 1.2), interpolation=transforms.InterpolationMode.BILINEAR),
+                                        transforms.RandomGrayscale(p=0.1),
+                                        transforms.ColorJitter(brightness=0.5, hue=0.5, contrast=0.5, saturation=0.5),
+                                        transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
-        _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._validate_subjects, transform=transform)
+        _data = self._dataset_fn(root_path=self.hparams.dataset, subject_list=self._validate_subjects, eye_transform=transform, data_fraction=0.05, data_type="validation")
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def test_dataloader(self):
@@ -144,11 +146,11 @@ class TrainRTGENEAAVAE(pl.LightningModule):
                                         transforms.Resize(size=(32, 32)),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])])
-        _data = RTGENEH5Dataset(h5_pth=self.hparams.hdf5_file, subject_list=self._test_subjects, transform=transform)
+        _data = self._dataset_fn(root_path=self.hparams.dataset, subject_list=self._test_subjects, eye_transform=transform, data_fraction=1.0, data_type="testing")
         return DataLoader(_data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def configure_optimizers(self):
-        def linear_warmup_decay(warmup_steps, total_steps, cosine=True):
+        def linear_warmup_decay(warmup_steps):
             """
             Linear warmup for warmup_steps, optionally with cosine annealing or
             linear decay to 0 at total_steps
@@ -161,14 +163,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
                 if step < warmup_steps:
                     return float(step) / float(max(1, warmup_steps))
 
-                return 1.0  # do not decay
-                # progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                # if cosine:
-                #     # cosine decay
-                #     return 0.5 * (1.0 + math.cos(math.pi * progress))
-                #
-                # # linear decay
-                # return 1.0 - progress
+                return 1.0  # do not decay after reaching the top
 
             return optimiser_schedule_fn
 
@@ -190,7 +185,7 @@ class TrainRTGENEAAVAE(pl.LightningModule):
             total_steps = (81152 / self.hparams.batch_size) * self.hparams.max_epochs
 
             scheduler = {
-                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps, total_steps, self.hparams.cosine_decay)),
+                "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps)),
                 "interval": "step",
                 "frequency": 1,
             }
@@ -207,8 +202,6 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         parser.add_argument('--weight_decay', default=0, type=float)
         parser.add_argument('--optimiser_schedule', action="store_true", default=False)
         parser.add_argument('--warmup_epochs', type=int, default=10)
-        parser.add_argument('--cosine_decay', action="store_true", dest="cosine_decay")
-        parser.add_argument('--linear_decay', action="store_false", dest="cosine_decay")
         parser.add_argument('--optimiser', choices=["adam_w", "lamb"], default="adam_w")
         parser.add_argument('--kld_weight', type=float, default=0)
         parser.add_argument('--latent_dim', type=int, default=128)
@@ -225,7 +218,7 @@ if __name__ == "__main__":
 
     root_parser = ArgumentParser(add_help=False)
     root_parser.add_argument('--gpu', type=int, default=-1, help="number of gpus to use")
-    root_parser.add_argument('--hdf5_file', type=str, default="rtgene_dataset.hdf5")
+    root_parser.add_argument('--dataset', type=str, default="rtgene_dataset.hdf5")
     root_parser.add_argument('--dataset_type', type=str, choices=["rt_gene", "other"], default="rt_gene")
     root_parser.add_argument('--eye_laterality', type=str, choices=["left", "right"], default="right")
     root_parser.add_argument('--num_io_workers', default=psutil.cpu_count(logical=False), type=int)
@@ -234,12 +227,20 @@ if __name__ == "__main__":
     root_parser.add_argument('--seed', type=int, default=0)
     root_parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
     root_parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
-    root_parser.add_argument('--precision', choices=["16", "32"], default="32")
+    root_parser.add_argument('--precision', choices=[16, 32], default=32, type=int)
     root_parser.set_defaults(k_fold_validation=True)
 
     model_parser = TrainRTGENEAAVAE.add_model_specific_args(root_parser)
     hyperparams = model_parser.parse_args()
-    hyperparams.hdf5_file = os.path.abspath(os.path.expanduser(hyperparams.hdf5_file))
+    hyperparams.dataset = os.path.abspath(os.path.expanduser(hyperparams.dataset))
+
+    if os.path.isfile(hyperparams.dataset):
+        dataset_loader = RTGENEH5Dataset
+    elif os.path.isdir(hyperparams.dataset):
+        dataset_loader = RTGENEFileDataset
+    else :
+        raise ValueError("Unknown dataset as the dataset is neither a file (and therefore an HDF5) or a folder")
+
     print_args(hyperparams)
 
     pl.seed_everything(hyperparams.seed)
@@ -249,17 +250,17 @@ if __name__ == "__main__":
     test_subs = []
     if hyperparams.dataset_type == "rt_gene":
         if hyperparams.k_fold_validation:
-            train_subs.append([1, 2, 8, 10, 3, 4, 7, 9])
-            train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13])
-            train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13])
-            # validation set is always subjects 14, 15 and 16
-            valid_subs.append([0, 14, 15, 16])
-            valid_subs.append([0, 14, 15, 16])
-            valid_subs.append([0, 14, 15, 16])
-            # test subjects
-            test_subs.append([5, 6, 11, 12, 13])
-            test_subs.append([3, 4, 7, 9])
-            test_subs.append([1, 2, 8, 10])
+            train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13, 14, 15, 16])
+            train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
+            train_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
+
+            valid_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13, 14, 15, 16])
+            valid_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
+            valid_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
+
+            test_subs.append([0])
+            test_subs.append([0])
+            test_subs.append([0])
         else:
             train_subs.append([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
             valid_subs.append([0])  # Note that this is a hack and should not be used to get results for papers
@@ -280,16 +281,17 @@ if __name__ == "__main__":
             test_subs.append([keys[0]])
 
     for fold, (train_s, valid_s, test_s) in enumerate(zip(train_subs, valid_subs, test_subs)):
-        model = TrainRTGENEAAVAE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s)
+        model = TrainRTGENEAAVAE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s, dataset=dataset_loader)
 
         # can't save valid_loss or valid_angle_loss as now that's a composite loss mediated by a training related parameter
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10,
                                      filename="epoch={epoch}-valid_loss={valid_loss:.2f}", save_last=True),
                      LearningRateMonitor(),
-                     OnlineFineTuner(encoder_output_dim=512)]
+                     OnlineFineTuner(encoder_output_dim=512, eye_laterality=hyperparams.eye_laterality)]
 
         # start training
-        trainer = Trainer(gpus=hyperparams.gpu,
+        trainer = Trainer(accelerator="gpu",
+                          devices=hyperparams.gpu,
                           strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
                           precision=int(hyperparams.precision),
                           callbacks=callbacks,

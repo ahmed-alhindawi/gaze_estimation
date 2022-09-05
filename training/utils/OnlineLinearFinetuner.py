@@ -7,29 +7,34 @@ import pytorch_lightning as pl
 from pytorch_lightning import Callback
 from torchmetrics.regression.mse import MeanSquaredError
 from torchmetrics import MetricCollection
-from gaze_estimation.training.utils.GazeAngleAccuracyMetric import GazeAngleAccuracyMetric
+from gaze_estimation.training.utils import GazeAngleAccuracyMetric, GNLL
 from typing import Sequence, Union, Tuple, Optional
 
 
 class OnlineFineTuner(Callback):
 
-    def __init__(self, encoder_output_dim: int = 128) -> None:
+    def __init__(self, encoder_output_dim: int = 128, eye_laterality: str = "left") -> None:
         super().__init__()
 
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.encoder_output_dim = encoder_output_dim
         self.metrics = MetricCollection([MeanSquaredError(), GazeAngleAccuracyMetric()])
-        self.loss_fn = torch.nn.L1Loss()
+        self.loss_fn = torch.nn.MSELoss()
+        self.eye_laterality = eye_laterality
+        self.extract_img_fn = {
+            "left": lambda x: (x[0], x[2]),
+            "right": lambda x: (x[1], x[3])
+        }
 
-    def on_pretrain_routine_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+    def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         # add linear_eval layer and optimizer
-        pl_module.online_finetuner = MLPEvaluator(n_input=self.encoder_output_dim).to(pl_module.device)
+        pl_module.online_finetuner = MLPEvaluator(n_input=self.encoder_output_dim, n_out=2).to(pl_module.device)
         self.optimizer = torch.optim.AdamW(pl_module.online_finetuner.parameters(), lr=1e-4)
         self.metrics.to(pl_module.device)
 
-    @staticmethod
-    def to_device(batch: Sequence, device: Union[str, torch.device]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        eye_patch, _, _, _, head_pose, gaze_pose = batch
+    def to_device(self, batch: Sequence, device: Union[str, torch.device]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        _, _, _, _, head_pose, gaze_pose = batch
+        eye_patch = self.extract_img_fn[self.eye_laterality](batch)[0]
         eye_patch = eye_patch.to(device)
         head_pose = head_pose.to(device)
         gaze_pose = gaze_pose.to(device)
@@ -90,10 +95,10 @@ def set_training(module: nn.Module, mode: bool):
 
 
 class MLPEvaluator(nn.Module):
-    def __init__(self, n_input: int = 128, n_classes=2, n_hidden=512):
+    def __init__(self, n_input: int = 128, n_out=2, n_hidden=64):
         super().__init__()
         self.n_input = n_input
-        self.n_classes = n_classes
+        self.n_classes = n_out
         self.n_hidden = n_hidden
 
         # use simple MLP classifier
@@ -102,7 +107,7 @@ class MLPEvaluator(nn.Module):
             nn.Linear(n_input + 2, n_hidden),
             nn.BatchNorm1d(n_hidden),
             nn.GELU(),
-            nn.Linear(n_hidden, n_classes),
+            nn.Linear(n_hidden, n_out),
         )
 
     def forward(self, latent, headpose):
