@@ -182,8 +182,6 @@ class TrainRTGENEAAVAE(pl.LightningModule):
         if self.hparams.optimiser_schedule:
 
             warmup_steps = (81152 / self.hparams.batch_size) * self.hparams.warmup_epochs
-            total_steps = (81152 / self.hparams.batch_size) * self.hparams.max_epochs
-
             scheduler = {
                 "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps)),
                 "interval": "step",

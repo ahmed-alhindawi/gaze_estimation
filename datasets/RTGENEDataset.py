@@ -124,8 +124,3 @@ class RTGENEH5Dataset(data.Dataset):
 
         return self._orig_transform(left_img), self._orig_transform(right_img), transformed_left, transformed_right, ground_truth_headpose, ground_truth_gaze
 
-
-if __name__ == "__main__":
-    _dataset = RTGENEH5Dataset(root_path="/home/ahmed/datasets/rtgene_dataset.hdf5", subject_list=[0], eye_transform=None, data_type="training", data_fraction=0.95)
-    for i in range(len(_dataset)):
-        _ = _dataset[i]
