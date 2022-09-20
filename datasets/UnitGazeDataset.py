@@ -70,8 +70,8 @@ class UnitGazeFileDataset(data.Dataset):
             gaze_angles = np.array([gaze_theta, gaze_phi])
 
             head_angles = np.array(list(eval(data['head_pose']))[:2])
-            head_angles[1] -= 180
-            head_angles = np.unwrap(np.deg2rad(head_angles))
+            head_angles = np.deg2rad(head_angles)
+            head_angles[0] = -head_angles[0]
 
         return img, gaze_angles, head_angles, eye_c
 
@@ -85,15 +85,9 @@ if __name__ == "__main__":
 
     dataset = UnitGazeFileDataset(root_path="/home/ahmed/datasets/unity_eyes/", data_fraction=1.0, data_type="training")
 
-    for img, gaze, head, eye_c, (left, top, right, bottom), curc, rb in dataset:
+    for img, gaze, head, eye_c in dataset:
         img = np.asarray(img)[:, :, ::-1]
         img = np.ascontiguousarray(img)
 
-        endpoint_x = -100 * math.cos(gaze[0]) * math.sin(gaze[1]) + eye_c[0]
-        endpoint_y = -100 * math.sin(gaze[0]) + eye_c[1]
-
-        eye_viz = cv2.line(img, (int(eye_c[0]), int(eye_c[1])), (int(endpoint_x), int(endpoint_y)), (255, 0, 0), 5)
-        eye_viz = cv2.circle(img, curc, 10, (255, 0, 0), -1)
-        eye_viz = cv2.circle(img, rb, 10, (255, 0, 0), -1)
-        cv2.imshow("eye", eye_viz)
+        cv2.imshow("eye", img)
         cv2.waitKey(2000)
