@@ -10,9 +10,8 @@ from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 from torchvision.transforms import transforms
 
-from gaze_estimation.datasets.RTGENEDataset import RTGENEFileDataset
-from gaze_estimation.datasets.UnityGazeDataset import UnitGazeFileDataset
-from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet, GazeEstimationModelConvNeXt, GazeEstimationWideResNet
+from gaze_estimation.datasets.Gaze360Dataset import Gaze360FileLoader
+from gaze_estimation.model import FaceGazeVGGModel
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils import GazeAngleAccuracyMetric, GNLL
 
@@ -23,10 +22,7 @@ LOSS_FN = {
     "gnll": {"loss": GNLL, "num_out": 3}
 }
 MODELS = {
-    "vgg16": GazeEstimationModelVGG,
-    "resnet18": GazeEstimationModelResNet,
-    "convnext_tiny": GazeEstimationModelConvNeXt,
-    "wideresnet50_2": GazeEstimationWideResNet
+    "vgg16": FaceGazeVGGModel,
 }
 
 OPTIMISERS = {
@@ -37,25 +33,22 @@ OPTIMISERS = {
 
 class TrainRTGENE(pl.LightningModule):
 
-    def __init__(self, hparams, train_subjects, validate_subjects, test_subjects, dataset):
+    def __init__(self, hparams, dataset):
         super(TrainRTGENE, self).__init__()
 
         self.model = MODELS[hparams.model_base](num_out=LOSS_FN[hparams.loss_fn]["num_out"])
         self._dataset = dataset
         self._criterion = LOSS_FN[hparams.loss_fn]["loss"]()
         self._metrics = MetricCollection([GazeAngleAccuracyMetric(reduction="mean")])
-        self._train_subjects = train_subjects
-        self._validate_subjects = validate_subjects
-        self._test_subjects = test_subjects
         self.save_hyperparameters(hparams)
 
-    def forward(self, left_patch, right_patch, head_pose):
-        return self.model(left_patch, right_patch, head_pose)
+    def forward(self, face):
+        return self.model(face)
 
     def shared_step(self, batch):
-        _, _, left_patch, right_patch, headpose_label, gaze_labels = batch
+        face, gaze_labels = batch
 
-        y = self.forward(left_patch, right_patch, headpose_label)
+        y = self.forward(face)
         angle_out = y[:, :2]
         metrics = self._metrics(angle_out[:, :2], gaze_labels)
 
@@ -92,23 +85,27 @@ class TrainRTGENE(pl.LightningModule):
         self._metrics.reset()  # we're logging a dict, so we need to do this manually
 
     def train_dataloader(self):
-        eye_transform = transforms.Compose([transforms.ToTensor(),
-                                            transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
-                                            transforms.RandomGrayscale(p=0.1),
-                                            transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
-                                            transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
-                                            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                                 std=[0.229, 0.224, 0.225])])
+        face_transform = transforms.Compose([transforms.ToTensor(),
+                                             transforms.RandomResizedCrop(size=(244, 244), scale=(0.5, 1.3)),
+                                             transforms.RandomGrayscale(p=0.1),
+                                             transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
+                                             transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
+                                             transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                  std=[0.229, 0.224, 0.225])])
 
-        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._train_subjects, eye_transform=eye_transform, data_fraction=0.95, data_type="training")
+        data = self._dataset(root_path=self.hparams.dataset_path, file_name="train.txt", transform=face_transform, data_type="training")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=True, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def val_dataloader(self):
-        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._validate_subjects, eye_transform=None, data_fraction=0.05, data_type="validation")
+        face_transform = transforms.Compose([transforms.ToTensor(),
+                                             transforms.Resize(size=(244, 244))])
+        data = self._dataset(root_path=self.hparams.dataset_path, file_name="validation.txt", transform=face_transform, data_type="validation")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def test_dataloader(self):
-        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._test_subjects, eye_transform=None, data_fraction=0.05, data_type="testing")
+        face_transform = transforms.Compose([transforms.ToTensor(),
+                                             transforms.Resize(size=(244, 244))])
+        data = self._dataset(root_path=self.hparams.dataset_path, file_name="test.txt", transform=face_transform, data_type="testing")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def configure_optimizers(self):
@@ -148,8 +145,8 @@ class TrainRTGENE(pl.LightningModule):
         optimizer = OPTIMISERS.get(self.hparams.optimiser)(params_to_update, lr=self.hparams.learning_rate, weight_decay=self.hparams.weight_decay)
 
         if self.hparams.optimiser_schedule:
-            warmup_steps = (74804 / self.hparams.batch_size) * self.hparams.warmup_epochs  # 74804 is from len(training_dataset)
-            total_steps = (74804 / self.hparams.batch_size) * self.hparams.max_epochs
+            warmup_steps = (126928 / self.hparams.batch_size) * self.hparams.warmup_epochs  # 74804 is from len(training_dataset)
+            total_steps = (126928 / self.hparams.batch_size) * self.hparams.max_epochs
 
             scheduler = {
                 "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, linear_warmup_decay(warmup_steps, total_steps=total_steps)),
@@ -203,53 +200,22 @@ if __name__ == "__main__":
 
     pl.seed_everything(hyperparams.seed)
 
-    train_subs = []
-    valid_subs = []
-    test_subs = []
-    dataset_type = None
-    if hyperparams.dataset_name == "rt_gene":
-        dataset_type = RTGENEFileDataset
-        if hyperparams.k_fold_validation:
-            train_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13, 14, 15, 16])
-            train_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
-            train_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
+    dataset_partial = partial(Gaze360FileLoader)
 
-            valid_subs.append([3, 4, 7, 9, 5, 6, 11, 12, 13, 14, 15, 16])
-            valid_subs.append([1, 2, 8, 10, 5, 6, 11, 12, 13, 14, 15, 16])
-            valid_subs.append([1, 2, 8, 10, 3, 4, 7, 9, 14, 15, 16])
+    model = TrainRTGENE(hparams=hyperparams, dataset=dataset_partial)
 
-            test_subs.append([0])
-            test_subs.append([0])
-            test_subs.append([0])
-        else:
-            train_subs.append([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-            valid_subs.append([0])  # Note that this is a hack and should not be used to get results for papers
-            test_subs.append([0])
-    elif hyperparams.dataset_name == "unity_eyes":
-        dataset_type = UnitGazeFileDataset
-        train_subs.append([0])
-        valid_subs.append([0])
-        test_subs.append([0])
-    else:
-        raise ValueError("Unknown dataset name, must either be rt_gene or unity_eyes")
+    callbacks = [
+        ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10, save_last=True, filename="{epoch}-{valid_loss:.2f}-{valid_GazeAngleAccuracyMetric:.2f}"),
+        LearningRateMonitor()]
 
-    for fold, (train_s, valid_s, test_s) in enumerate(zip(train_subs, valid_subs, test_subs)):
-        # create the dataset for this type
-        dataset_partial = partial(dataset_type, )
-
-        hyperparams.fold_idx = fold
-        model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s, dataset=dataset_type)
-
-        callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10, save_last=True,
-                                     filename="{epoch}-{valid_loss:.2f}-{valid_GazeAngleAccuracyMetric:.2f}"), LearningRateMonitor()]
-
-        # start training
-        trainer = Trainer(accelerator="gpu",
-                          devices=hyperparams.gpu,
-                          precision=int(hyperparams.precision),
-                          callbacks=callbacks,
-                          strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
-                          log_every_n_steps=10,
-                          max_epochs=hyperparams.max_epochs)
-        trainer.fit(model)
-        trainer.test()
+    # start training
+    trainer = Trainer(accelerator="gpu",
+                      devices=hyperparams.gpu,
+                      precision=int(hyperparams.precision),
+                      callbacks=callbacks,
+                      val_check_interval=0.5,
+                      strategy=None if hyperparams.distributed_strategy == "none" else hyperparams.distributed_strategy,
+                      log_every_n_steps=10,
+                      max_epochs=hyperparams.max_epochs)
+    trainer.fit(model)
+    trainer.test()

@@ -12,33 +12,29 @@ class GazeEstimationAbstractModel(nn.Module):
     @staticmethod
     def create_fc_layers(in_features, out_features):
         x_l = nn.Sequential(
-            nn.Linear(in_features, 1024),
-            nn.BatchNorm1d(1024),
+            nn.Linear(in_features, 16),
+            nn.BatchNorm1d(16),
             nn.GELU()
         )
         x_r = nn.Sequential(
-            nn.Linear(in_features, 1024),
-            nn.BatchNorm1d(1024),
+            nn.Linear(in_features, 16),
+            nn.BatchNorm1d(16),
             nn.GELU()
         )
 
         concat = nn.Sequential(
-            nn.Linear(2048, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(32, 18),
+            nn.BatchNorm1d(18),
             nn.GELU()
 
         )
 
         fc1 = nn.Sequential(
-            nn.Linear(514, 256),
+            nn.Linear(20, out_features),
             nn.GELU()
         )
 
-        fc2 = nn.Sequential(
-            nn.Linear(256, out_features)
-        )
-
-        return x_l, x_r, concat, fc1, fc2
+        return x_l, x_r, concat, fc1
 
     def forward(self, left_eye, right_eye, headpose):
         left_x = self.left_features(left_eye)
@@ -55,6 +51,5 @@ class GazeEstimationAbstractModel(nn.Module):
         eyes_headpose = torch.cat((eyes_x, headpose), dim=1)
 
         fc1_output = self.fc1(eyes_headpose)
-        fc2_output = self.fc2(fc1_output)
 
-        return fc2_output, fc1_output
+        return fc1_output

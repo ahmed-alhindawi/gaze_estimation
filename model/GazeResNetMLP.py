@@ -2,7 +2,7 @@
 import torch.nn as nn
 from torchvision import models
 
-from .AbstractModel import GazeEstimationAbstractModel
+from gaze_estimation.model.AbstractModel import GazeEstimationAbstractModel
 
 
 class GazeEstimationModelResNet(GazeEstimationAbstractModel):
@@ -22,7 +22,7 @@ class GazeEstimationModelResNet(GazeEstimationAbstractModel):
             left_model.layer2,
             left_model.layer3,
             left_model.layer4,
-            left_model.avgpool
+            nn.Conv2d(512, 32, 1, 1)
         )
 
         self.right_features = nn.Sequential(
@@ -34,7 +34,7 @@ class GazeEstimationModelResNet(GazeEstimationAbstractModel):
             right_model.layer2,
             right_model.layer3,
             right_model.layer4,
-            right_model.avgpool
+            nn.Conv2d(512, 32, 1, 1)
         )
 
         for param in self.left_features.parameters():
@@ -42,5 +42,20 @@ class GazeEstimationModelResNet(GazeEstimationAbstractModel):
         for param in self.right_features.parameters():
             param.requires_grad = True
 
-        self.xl, self.xr, self.concat, self.fc1, self.fc2 = GazeEstimationAbstractModel.create_fc_layers(
-            in_features=left_model.fc.in_features, out_features=num_out)
+        self.xl, self.xr, self.concat, self.fc1 = GazeEstimationAbstractModel.create_fc_layers(in_features=128, out_features=num_out)
+
+
+if __name__ == "__main__":
+    from tqdm import tqdm
+    import torch
+    model = GazeEstimationModelResNet()
+    model.eval()
+    model.to("cuda:0")
+
+    d1 = torch.rand(1, 3, 36, 60).to("cuda:0")
+    d2 = torch.rand(1, 3, 36, 60).to("cuda:0")
+    d3 = torch.rand(1, 2).to("cuda:0")
+
+    with torch.inference_mode():
+        for _ in tqdm(range(10000)):
+            _ = model(d1, d2, d3)

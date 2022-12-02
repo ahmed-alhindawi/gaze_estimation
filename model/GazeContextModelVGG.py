@@ -56,12 +56,7 @@ class GazeWithContextEstimationModelVGG(nn.Module):
         )
 
         self.fc1 = nn.Sequential(
-            nn.Linear(512, 256),
-            nn.GELU()
-        )
-
-        self.fc2 = nn.Sequential(
-            nn.Linear(256, num_out)
+            nn.Linear(512, num_out),
         )
 
     def forward(self, left_eye, right_eye, face):
@@ -81,8 +76,7 @@ class GazeWithContextEstimationModelVGG(nn.Module):
         context_x = self.concat(context_x)
 
         fc1_output = self.fc1(context_x)
-        fc2_output = self.fc2(fc1_output)
-        return fc2_output
+        return fc1_output
 
 
 if __name__ == "__main__":

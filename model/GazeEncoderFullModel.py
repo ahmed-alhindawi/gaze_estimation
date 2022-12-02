@@ -38,11 +38,7 @@ class GazeEncoderFullModel(nn.Module):
 
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(514, 256),
-            nn.Tanhshrink()
-        )
-        self.fc2 = nn.Sequential(
-            nn.Linear(256, out_features)
+            nn.Linear(514, out_features),
         )
 
     def forward(self, left_eye, right_eye, headpose):
@@ -60,6 +56,5 @@ class GazeEncoderFullModel(nn.Module):
         eyes_headpose = torch.cat((eyes_x, headpose), dim=1)
 
         fc1_output = self.fc1(eyes_headpose)
-        fc2_output = self.fc2(fc1_output)
 
-        return fc2_output
+        return fc1_output

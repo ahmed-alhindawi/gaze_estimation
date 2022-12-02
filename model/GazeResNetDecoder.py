@@ -25,9 +25,7 @@ class Interpolate(nn.Module):
 
 def conv3x3(in_planes: int, out_planes: int, groups: int = 1) -> nn.Conv2d:
     """3x3 convolution with padding"""
-    return nn.Conv2d(
-        in_planes, out_planes, kernel_size=3, padding=1, groups=groups, bias=True
-    )
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, padding=1, groups=groups, bias=True)
 
 
 def conv1x1(in_planes: int, out_planes: int) -> nn.Conv2d:
