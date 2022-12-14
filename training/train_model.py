@@ -191,10 +191,11 @@ if __name__ == "__main__":
     parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--precision', type=int, default=32, choices=[16, 32])
-    parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"],
-                        default="ddp_find_unused_parameters_false")
+    parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
     parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
+    parser.add_argument('--stochastic_weight_averaging', action="store_true", dest="swa")
     parser.set_defaults(k_fold_validation=True)
+    parser.set_defaults(swa=False)
 
     model_parser = TrainRTGENE.add_model_specific_args(parser)
     hyperparams = model_parser.parse_args()
@@ -241,7 +242,10 @@ if __name__ == "__main__":
         model = TrainRTGENE(hparams=hyperparams, train_subjects=train_s, validate_subjects=valid_s, test_subjects=test_s, dataset=dataset_type)
 
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10, save_last=True,
-                                     filename="{epoch}-{valid_loss:.2f}-{valid_GazeAngleAccuracyMetric:.2f}"), LearningRateMonitor()]
+                                     filename="{epoch}-{valid_loss:.4f}-{valid_GazeAngleAccuracyMetric:.3f}"),
+                     LearningRateMonitor()]
+        if hyperparams.swa:
+            callbacks.append(StochasticWeightAveraging(swa_lrs=1e-4))
 
         # start training
         trainer = Trainer(accelerator="gpu",

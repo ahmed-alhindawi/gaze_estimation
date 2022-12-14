@@ -188,8 +188,7 @@ if __name__ == "__main__":
     parser.add_argument('--all_dataset', action='store_false', dest="k_fold_validation")
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--precision', type=int, default=32, choices=[16, 32])
-    parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"],
-                        default="ddp_find_unused_parameters_false")
+    parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"],  default="ddp_find_unused_parameters_false")
     parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
     parser.set_defaults(k_fold_validation=True)
 
