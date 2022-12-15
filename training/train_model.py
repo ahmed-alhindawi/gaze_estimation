@@ -12,7 +12,7 @@ from torchvision.transforms import transforms
 
 from gaze_estimation.datasets.RTGENEDataset import RTGENEFileDataset
 from gaze_estimation.datasets.UnityGazeDataset import UnitGazeFileDataset
-from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet, GazeEstimationModelConvNeXt, GazeEstimationWideResNet
+from gaze_estimation.model import GazeEstimationModelVGG, GazeEstimationModelResNet, GazeEstimationModelConvNeXt, GazeEstimationWideResNet, GazeEstimationModelEfficientFormer
 from gaze_estimation.training.LAMB import LAMB
 from gaze_estimation.training.utils import GazeAngleAccuracyMetric, GNLL
 
@@ -26,7 +26,8 @@ MODELS = {
     "vgg16": GazeEstimationModelVGG,
     "resnet18": GazeEstimationModelResNet,
     "convnext_tiny": GazeEstimationModelConvNeXt,
-    "wideresnet50_2": GazeEstimationWideResNet
+    "wideresnet50_2": GazeEstimationWideResNet,
+    "efficientformer_l1": GazeEstimationModelEfficientFormer
 }
 
 OPTIMISERS = {
@@ -93,7 +94,7 @@ class TrainRTGENE(pl.LightningModule):
 
     def train_dataloader(self):
         eye_transform = transforms.Compose([transforms.ToTensor(),
-                                            transforms.RandomResizedCrop(size=(36, 60), scale=(0.5, 1.3)),
+                                            transforms.RandomResizedCrop(size=(224, 224), scale=(0.5, 1.3)),
                                             transforms.RandomGrayscale(p=0.1),
                                             transforms.ColorJitter(brightness=0.5, hue=0.2, contrast=0.5, saturation=0.5),
                                             transforms.RandomApply([transforms.GaussianBlur(3, sigma=(0.1, 2.0))], p=0.1),
@@ -104,11 +105,19 @@ class TrainRTGENE(pl.LightningModule):
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=True, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def val_dataloader(self):
-        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._validate_subjects, eye_transform=None, data_fraction=0.05, data_type="validation")
+        eye_transform = transforms.Compose([transforms.Resize((224, 224), transforms.InterpolationMode.NEAREST),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
+        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._validate_subjects, eye_transform=eye_transform, data_fraction=0.05, data_type="validation")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def test_dataloader(self):
-        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._test_subjects, eye_transform=None, data_fraction=0.05, data_type="testing")
+        eye_transform = transforms.Compose([transforms.Resize((224, 224), transforms.InterpolationMode.NEAREST),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+
+        data = self._dataset(root_path=self.hparams.dataset_path, subject_list=self._validate_subjects, eye_transform=eye_transform, data_fraction=0.05, data_type="testing")
         return DataLoader(data, batch_size=self.hparams.batch_size, shuffle=False, num_workers=self.hparams.num_io_workers, pin_memory=True)
 
     def configure_optimizers(self):
@@ -193,9 +202,7 @@ if __name__ == "__main__":
     parser.add_argument('--precision', type=int, default=32, choices=[16, 32])
     parser.add_argument('--distributed_strategy', choices=["none", "ddp_find_unused_parameters_false"], default="ddp_find_unused_parameters_false")
     parser.add_argument('--max_epochs', type=int, default=300, help="Maximum number of epochs to perform; the trainer will Exit after.")
-    parser.add_argument('--stochastic_weight_averaging', action="store_true", dest="swa")
     parser.set_defaults(k_fold_validation=True)
-    parser.set_defaults(swa=False)
 
     model_parser = TrainRTGENE.add_model_specific_args(parser)
     hyperparams = model_parser.parse_args()
@@ -244,8 +251,6 @@ if __name__ == "__main__":
         callbacks = [ModelCheckpoint(monitor='valid_loss', mode='min', verbose=False, save_top_k=10, save_last=True,
                                      filename="{epoch}-{valid_loss:.4f}-{valid_GazeAngleAccuracyMetric:.3f}"),
                      LearningRateMonitor()]
-        if hyperparams.swa:
-            callbacks.append(StochasticWeightAveraging(swa_lrs=1e-4))
 
         # start training
         trainer = Trainer(accelerator="gpu",
