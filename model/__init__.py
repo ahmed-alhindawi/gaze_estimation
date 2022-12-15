@@ -9,3 +9,4 @@ from .GazeContextModelVGG import *
 from .GazeConvNextMLP import GazeEstimationModelConvNeXt
 from .GazeEstimationWideResNet import GazeEstimationWideResNet
 from .FaceGazeVGGModel import FaceGazeVGGModel
+from .GazeEfficientFormer import GazeEstimationModelEfficientFormer
